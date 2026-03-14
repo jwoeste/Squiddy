@@ -1,0 +1,9 @@
+{
+  "workflowId": "underwriting",
+  "instanceId": "application-123",
+  "currentStatus": "Submitted",
+  "context": {
+    "riskScore": "LOW",
+    "documentsComplete": "true"
+  }
+}

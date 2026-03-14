@@ -1,0 +1,42 @@
+{
+  "workflow": {
+    "id": "underwriting",
+    "name": "Underwriting Workflow",
+    "statuses": [
+      {
+        "code": "Submitted",
+        "name": "Submitted",
+        "actions": [
+          {
+            "code": "AUTO_APPROVE",
+            "name": "Auto Approve",
+            "targetStatus": "Approved",
+            "isStraightThroughProcessing": true,
+            "conditions": [
+              {
+                "key": "riskScore",
+                "operator": "Equals",
+                "expectedValue": "LOW"
+              },
+              {
+                "key": "documentsComplete",
+                "operator": "Equals",
+                "expectedValue": "true"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "code": "Approved",
+        "name": "Approved",
+        "actions": []
+      }
+    ]
+  },
+  "currentStatus": "Submitted",
+  "context": {
+    "riskScore": "LOW",
+    "documentsComplete": "true"
+  }
+}

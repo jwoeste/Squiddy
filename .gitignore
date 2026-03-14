@@ -1,0 +1,12 @@
+.DS_Store
+
+# .NET build output
+bin/
+obj/
+
+# Local data
+data/*.db
+
+# Editor settings
+.vs/
+.vscode/

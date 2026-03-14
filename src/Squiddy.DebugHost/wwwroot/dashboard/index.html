@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Squiddy Workflow Studio</title>
+    <link rel="stylesheet" href="/dashboard/styles.css">
+</head>
+<body>
+    <div class="shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">Workflow Studio</p>
+                <h1>View, add, edit, and delete workflow definitions from one browser surface.</h1>
+                <p class="hero-copy">
+                    This UI works directly against the local debug host. Select a workflow to edit it, or create a new one and save it straight into SQLite.
+                </p>
+            </div>
+            <div class="hero-actions">
+                <a class="ghost-button" href="/swagger" target="_blank" rel="noreferrer">Open Swagger</a>
+                <button id="new-workflow-button" class="primary-button" type="button">New Workflow</button>
+                <button id="refresh-button" class="ghost-button" type="button">Refresh</button>
+            </div>
+        </header>
+
+        <main class="layout">
+            <section class="panel sidebar-panel">
+                <div class="panel-heading">
+                    <p class="panel-kicker">Catalog</p>
+                    <h2>Workflow library</h2>
+                </div>
+                <label class="field-label" for="workflow-search">Search workflows</label>
+                <input id="workflow-search" class="text-input" type="search" placeholder="Filter by id or name">
+                <div id="workflow-list" class="workflow-list"></div>
+            </section>
+
+            <section class="panel editor-panel">
+                <div class="panel-heading">
+                    <p class="panel-kicker">Editor</p>
+                    <h2 id="editor-title">Create workflow</h2>
+                </div>
+                <form id="workflow-form" class="editor-form">
+                    <div class="field-grid">
+                        <label class="field">
+                            <span class="field-label">Workflow ID</span>
+                            <input id="workflow-id" class="text-input" name="workflowId" type="text" placeholder="underwriting" required>
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Workflow name</span>
+                            <input id="workflow-name" class="text-input" name="workflowName" type="text" placeholder="Underwriting Workflow" required>
+                        </label>
+                    </div>
+
+                    <label class="field">
+                        <span class="field-label">Statuses JSON</span>
+                        <textarea
+                            id="workflow-statuses"
+                            class="code-input"
+                            name="workflowStatuses"
+                            spellcheck="false"
+                            placeholder='[
+  {
+    "code": "Draft",
+    "name": "Draft",
+    "actions": []
+  }
+]'
+                            required></textarea>
+                    </label>
+
+                    <div class="editor-actions">
+                        <button id="save-button" class="primary-button" type="submit">Save Workflow</button>
+                        <button id="reset-button" class="ghost-button" type="button">Reset</button>
+                        <button id="delete-button" class="danger-button" type="button" disabled>Delete</button>
+                    </div>
+                </form>
+                <div id="form-message" class="message-banner" aria-live="polite"></div>
+            </section>
+
+            <section class="panel preview-panel">
+                <div class="panel-heading">
+                    <p class="panel-kicker">Preview</p>
+                    <h2>Workflow structure</h2>
+                </div>
+                <div id="preview-summary" class="stats-grid"></div>
+                <div id="preview-statuses" class="preview-list"></div>
+            </section>
+        </main>
+    </div>
+
+    <template id="empty-state-template">
+        <div class="empty-state">
+            <p class="empty-title"></p>
+            <p class="empty-copy"></p>
+        </div>
+    </template>
+
+    <script src="/dashboard/app.js"></script>
+</body>
+</html>
