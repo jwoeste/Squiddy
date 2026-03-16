@@ -1,17 +1,23 @@
 {
   "workflow": {
     "id": "underwriting",
+    "version": 1,
     "name": "Underwriting Workflow",
+    "description": "Underwriting workflow with automatic approval and manual review.",
+    "initialStatus": "Submitted",
     "statuses": [
       {
         "code": "Submitted",
         "name": "Submitted",
+        "description": "The application is waiting for automation or referral.",
+        "isTerminal": false,
         "actions": [
           {
             "code": "AUTO_APPROVE",
             "name": "Auto Approve",
+            "description": "Automatically approves low-risk complete applications.",
             "targetStatus": "Approved",
-            "isStraightThroughProcessing": true,
+            "mode": "Automatic",
             "conditions": [
               {
                 "key": "riskScore",
@@ -30,6 +36,8 @@
       {
         "code": "Approved",
         "name": "Approved",
+        "description": "The application has been approved.",
+        "isTerminal": true,
         "actions": []
       }
     ]

@@ -11,9 +11,9 @@
         <header class="hero">
             <div>
                 <p class="eyebrow">Workflow Studio</p>
-                <h1>View, add, edit, and delete workflow definitions from one browser surface.</h1>
+                <h1>Design workflows visually, then save them directly to the local engine.</h1>
                 <p class="hero-copy">
-                    This UI works directly against the local debug host. Select a workflow to edit it, or create a new one and save it straight into SQLite.
+                    Draw statuses on a canvas, connect them with transitions, and fine-tune actions and rules without hand-editing JSON.
                 </p>
             </div>
             <div class="hero-actions">
@@ -34,39 +34,78 @@
                 <div id="workflow-list" class="workflow-list"></div>
             </section>
 
-            <section class="panel editor-panel">
-                <div class="panel-heading">
-                    <p class="panel-kicker">Editor</p>
-                    <h2 id="editor-title">Create workflow</h2>
-                </div>
-                <form id="workflow-form" class="editor-form">
-                    <div class="field-grid">
-                        <label class="field">
-                            <span class="field-label">Workflow ID</span>
-                            <input id="workflow-id" class="text-input" name="workflowId" type="text" placeholder="underwriting" required>
-                        </label>
-                        <label class="field">
-                            <span class="field-label">Workflow name</span>
-                            <input id="workflow-name" class="text-input" name="workflowName" type="text" placeholder="Underwriting Workflow" required>
-                        </label>
+            <section class="panel studio-panel">
+                <div class="panel-heading panel-heading-split">
+                    <div>
+                        <p class="panel-kicker">Studio</p>
+                        <h2 id="editor-title">Create workflow</h2>
                     </div>
+                    <div class="toolbar">
+                        <button id="add-status-button" class="ghost-button" type="button">Add Status</button>
+                        <button id="connect-button" class="ghost-button" type="button">Connect Statuses</button>
+                        <button id="autolayout-button" class="ghost-button" type="button">Auto Layout</button>
+                    </div>
+                </div>
 
-                    <label class="field">
-                        <span class="field-label">Statuses JSON</span>
-                        <textarea
-                            id="workflow-statuses"
-                            class="code-input"
-                            name="workflowStatuses"
-                            spellcheck="false"
-                            placeholder='[
-  {
-    "code": "Draft",
-    "name": "Draft",
-    "actions": []
-  }
-]'
-                            required></textarea>
-                    </label>
+                <form id="workflow-form" class="studio-form">
+                    <section class="form-card">
+                        <div class="field-grid">
+                            <label class="field">
+                                <span class="field-label">Workflow ID</span>
+                                <input id="workflow-id" class="text-input" name="workflowId" type="text" placeholder="underwriting" required>
+                            </label>
+                            <label class="field">
+                                <span class="field-label">Workflow name</span>
+                                <input id="workflow-name" class="text-input" name="workflowName" type="text" placeholder="Underwriting Workflow" required>
+                            </label>
+                        </div>
+                        <div class="field-grid field-grid-wide">
+                            <label class="field">
+                                <span class="field-label">Description</span>
+                                <textarea id="workflow-description" class="text-area" name="workflowDescription" placeholder="Describe what this workflow orchestrates."></textarea>
+                            </label>
+                            <label class="field">
+                                <span class="field-label">Initial status</span>
+                                <select id="workflow-initial-status" class="text-input" name="workflowInitialStatus"></select>
+                            </label>
+                        </div>
+                    </section>
+
+                    <section class="canvas-card">
+                        <div class="canvas-header">
+                            <div class="stats-grid" id="preview-summary"></div>
+                            <div class="canvas-tools">
+                                <div id="canvas-mode-label" class="mode-banner"></div>
+                                <div class="zoom-controls" aria-label="Canvas zoom controls">
+                                    <button id="zoom-out-button" class="ghost-button" type="button" aria-label="Zoom out">-</button>
+                                    <button id="zoom-reset-button" class="ghost-button" type="button">100%</button>
+                                    <button id="zoom-in-button" class="ghost-button" type="button" aria-label="Zoom in">+</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="workflow-canvas" class="workflow-canvas">
+                            <div id="workflow-canvas-content" class="workflow-canvas-content">
+                                <svg id="workflow-canvas-svg" class="workflow-canvas-svg" aria-hidden="true">
+                                    <defs>
+                                        <marker id="arrowhead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                                            <path d="M0,0 L12,6 L0,12 z"></path>
+                                        </marker>
+                                    </defs>
+                                </svg>
+                                <div id="workflow-canvas-nodes" class="workflow-canvas-nodes"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="form-card json-card">
+                        <div class="section-title-row">
+                            <div>
+                                <p class="panel-kicker">Export</p>
+                                <h3>Serialized definition</h3>
+                            </div>
+                        </div>
+                        <pre id="workflow-json-preview" class="json-preview"></pre>
+                    </section>
 
                     <div class="editor-actions">
                         <button id="save-button" class="primary-button" type="submit">Save Workflow</button>
@@ -77,13 +116,12 @@
                 <div id="form-message" class="message-banner" aria-live="polite"></div>
             </section>
 
-            <section class="panel preview-panel">
+            <section class="panel inspector-panel">
                 <div class="panel-heading">
-                    <p class="panel-kicker">Preview</p>
-                    <h2>Workflow structure</h2>
+                    <p class="panel-kicker">Inspector</p>
+                    <h2>Status and transition details</h2>
                 </div>
-                <div id="preview-summary" class="stats-grid"></div>
-                <div id="preview-statuses" class="preview-list"></div>
+                <div id="inspector-content"></div>
             </section>
         </main>
     </div>

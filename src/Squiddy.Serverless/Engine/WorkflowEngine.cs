@@ -7,6 +7,29 @@ public sealed class WorkflowEngine
         string currentStatusCode,
         IReadOnlyDictionary<string, string?> context)
     {
+        return EvaluateInternal(workflow, currentStatusCode, context, manualActionCode: null);
+    }
+
+    public WorkflowEvaluationResult ExecuteManualCommand(
+        WorkflowDefinition workflow,
+        string currentStatusCode,
+        string commandCode,
+        IReadOnlyDictionary<string, string?> context)
+    {
+        if (string.IsNullOrWhiteSpace(commandCode))
+        {
+            throw new InvalidOperationException("CommandCode is required.");
+        }
+
+        return EvaluateInternal(workflow, currentStatusCode, context, commandCode);
+    }
+
+    private static WorkflowEvaluationResult EvaluateInternal(
+        WorkflowDefinition workflow,
+        string currentStatusCode,
+        IReadOnlyDictionary<string, string?> context,
+        string? manualActionCode)
+    {
         var statuses = (workflow.Statuses ?? Array.Empty<WorkflowStatus>())
             .ToDictionary(status => status.Code, StringComparer.OrdinalIgnoreCase);
 
@@ -20,27 +43,63 @@ public sealed class WorkflowEngine
         var visitedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var activeStatus = currentStatus;
 
+        if (!string.IsNullOrWhiteSpace(manualActionCode))
+        {
+            var manualAction = EvaluateStatus(activeStatus, context, availableActions)
+                .SingleOrDefault(action => string.Equals(action.Code, manualActionCode, StringComparison.OrdinalIgnoreCase));
+
+            if (manualAction is null)
+            {
+                throw new InvalidOperationException(
+                    $"Command '{manualActionCode}' is not available from status '{activeStatus.Code}'.");
+            }
+
+            if (manualAction.Mode != WorkflowActionMode.Manual)
+            {
+                throw new InvalidOperationException(
+                    $"Command '{manualAction.Code}' cannot be invoked manually.");
+            }
+
+            if (!statuses.TryGetValue(manualAction.TargetStatus, out var nextStatus))
+            {
+                throw new InvalidOperationException(
+                    $"Action '{manualAction.Code}' points to unknown target status '{manualAction.TargetStatus}'.");
+            }
+
+            appliedActions.Add(new AppliedAction(
+                manualAction.Code,
+                manualAction.Name,
+                activeStatus.Code,
+                nextStatus.Code,
+                AppliedAutomatically: false));
+
+            activeStatus = nextStatus;
+        }
+
         while (true)
         {
             if (!visitedStatuses.Add(activeStatus.Code))
             {
-                throw new InvalidOperationException("Detected an STP loop in workflow evaluation.");
+                throw new InvalidOperationException("Detected an automatic transition loop in workflow evaluation.");
             }
 
-            var stpAction = EvaluateStatus(activeStatus, context, availableActions);
-            if (stpAction is null)
+            var automaticAction = EvaluateStatus(activeStatus, context, availableActions)
+                .FirstOrDefault(action => action.Mode == WorkflowActionMode.Automatic);
+
+            if (automaticAction is null)
             {
                 break;
             }
 
-            if (!statuses.TryGetValue(stpAction.TargetStatus, out var nextStatus))
+            if (!statuses.TryGetValue(automaticAction.TargetStatus, out var nextStatus))
             {
                 throw new InvalidOperationException(
-                    $"Action '{stpAction.Code}' points to unknown target status '{stpAction.TargetStatus}'.");
+                    $"Action '{automaticAction.Code}' points to unknown target status '{automaticAction.TargetStatus}'.");
             }
 
             appliedActions.Add(new AppliedAction(
-                stpAction.Code,
+                automaticAction.Code,
+                automaticAction.Name,
                 activeStatus.Code,
                 nextStatus.Code,
                 AppliedAutomatically: true));
@@ -56,12 +115,12 @@ public sealed class WorkflowEngine
             appliedActions);
     }
 
-    private static WorkflowAction? EvaluateStatus(
+    private static IReadOnlyList<WorkflowAction> EvaluateStatus(
         WorkflowStatus status,
         IReadOnlyDictionary<string, string?> context,
         List<ActionEvaluation> availableActions)
     {
-        WorkflowAction? firstMatchingStpAction = null;
+        var matchingActions = new List<WorkflowAction>();
 
         foreach (var action in status.Actions ?? Array.Empty<WorkflowAction>())
         {
@@ -72,16 +131,16 @@ public sealed class WorkflowEngine
                 action.Code,
                 action.Name,
                 action.TargetStatus,
-                action.IsStraightThroughProcessing,
+                action.Mode,
                 conditionsMet));
 
-            if (firstMatchingStpAction is null && action.IsStraightThroughProcessing && conditionsMet)
+            if (conditionsMet)
             {
-                firstMatchingStpAction = action;
+                matchingActions.Add(action);
             }
         }
 
-        return firstMatchingStpAction;
+        return matchingActions;
     }
 
     private static bool EvaluateRule(ConditionRule rule, IReadOnlyDictionary<string, string?> context)

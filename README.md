@@ -4,11 +4,11 @@ Squiddy is a serverless workflow engine built on AWS Lambda and .NET 8.
 
 The current scaffold models:
 
-- workflow definitions made up of statuses and transition actions
-- status-specific actions
-- STP actions that can be applied automatically when their conditions are met
-- evaluation of the current workflow state against a runtime context
-- SQLite persistence for workflow definitions and workflow instances
+- workflow definitions with explicit authoring metadata, initial status, and status-level transitions
+- manual and automatic transitions with condition rules
+- optimistic versioning for workflow definitions and workflow instances
+- explicit instance creation plus a command API for manual transitions
+- SQLite persistence for workflow definitions, workflow instances, and audit history
 
 ## Structure
 
@@ -20,11 +20,12 @@ The current scaffold models:
 - `GET /` - service metadata
 - `GET /workflows` - lists workflow definitions from SQLite
 - `GET /workflows/{workflowId}` - returns one workflow definition from SQLite
-- `POST /workflows` - creates or updates a workflow definition in SQLite
+- `POST /workflows` - creates or updates a workflow definition with optimistic version checks
 - `DELETE /workflows/{workflowId}` - deletes a workflow definition and related local activity
-- `POST /workflows/evaluate` - evaluates a workflow definition and stores it if it has an id
+- `POST /workflows/evaluate` - evaluates a workflow definition in-memory
 - `GET /workflow-instances` - lists persisted workflow instances from SQLite
-- `POST /workflow-instances/evaluate` - evaluates a stored workflow, persists instance state, and auto-applies matching STP actions
+- `POST /workflow-instances` - creates a new workflow instance from the workflow's initial status
+- `POST /workflow-instances/{instanceId}/commands` - applies a manual command and then any eligible automatic transitions
 - `GET /workflow-instances/{instanceId}` - returns persisted workflow instance state
 - `GET /workflow-instances/{instanceId}/audit-trail` - returns the transactional audit trail for a workflow instance
 
@@ -34,17 +35,23 @@ Example request:
 {
   "workflow": {
     "id": "underwriting",
+    "version": 3,
     "name": "Underwriting Workflow",
+    "description": "Underwriting workflow with automatic approval and manual review.",
+    "initialStatus": "Submitted",
     "statuses": [
       {
         "code": "Submitted",
         "name": "Submitted",
+        "description": "The application is waiting for automation or referral.",
+        "isTerminal": false,
         "actions": [
           {
             "code": "AUTO_APPROVE",
             "name": "Auto Approve",
+            "description": "Automatically approves low-risk complete applications.",
             "targetStatus": "Approved",
-            "isStraightThroughProcessing": true,
+            "mode": "Automatic",
             "conditions": [
               { "key": "riskScore", "operator": "Equals", "expectedValue": "LOW" },
               { "key": "documentsComplete", "operator": "Equals", "expectedValue": "true" }
@@ -55,6 +62,8 @@ Example request:
       {
         "code": "Approved",
         "name": "Approved",
+        "description": "The application has been approved.",
+        "isTerminal": true,
         "actions": []
       }
     ]
@@ -67,16 +76,51 @@ Example request:
 }
 ```
 
-Example persisted instance evaluation:
+Example workflow definition save:
+
+```json
+{
+  "expectedVersion": 3,
+  "workflow": {
+    "id": "underwriting",
+    "version": 3,
+    "name": "Underwriting Workflow",
+    "description": "Underwriting workflow with automatic approval and manual review.",
+    "initialStatus": "Draft",
+    "statuses": [
+      {
+        "code": "Draft",
+        "name": "Draft",
+        "description": "Application is being assembled.",
+        "isTerminal": false,
+        "actions": []
+      }
+    ]
+  }
+}
+```
+
+Example workflow instance creation:
 
 ```json
 {
   "workflowId": "underwriting",
   "instanceId": "application-123",
-  "currentStatus": "Submitted",
   "context": {
     "riskScore": "LOW",
     "documentsComplete": "true"
+  }
+}
+```
+
+Example manual command:
+
+```json
+{
+  "commandCode": "REFER",
+  "expectedVersion": 1,
+  "context": {
+    "underwriterAssigned": "jwoeste"
   }
 }
 ```
@@ -131,4 +175,4 @@ sam deploy --guided
 
 ## Notes
 
-This still needs a real workflow authoring model, optimistic versioning, and a proper instance command API for manual transitions. Also note that SQLite on AWS Lambda is ephemeral unless you mount persistent storage such as EFS, so this persistence layer is suitable for local development and simple deployments but not durable production state by itself.
+SQLite on AWS Lambda is still ephemeral unless you mount persistent storage such as EFS, so this persistence layer is suitable for local development and simple deployments but not durable production state by itself.

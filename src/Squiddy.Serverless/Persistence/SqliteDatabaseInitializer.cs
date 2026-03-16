@@ -23,8 +23,14 @@ public sealed class SqliteDatabaseInitializer
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await EnsureColumnAsync(connection, "workflow_definitions", "version", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
+        await EnsureColumnAsync(connection, "workflow_instances", "version", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
+
         var repository = new SqliteWorkflowDefinitionRepository(connection);
-        await repository.UpsertAsync(seedWorkflow, cancellationToken: cancellationToken);
+        if (await repository.GetAsync(seedWorkflow.Id, cancellationToken: cancellationToken) is null)
+        {
+            await repository.SaveAsync(seedWorkflow, expectedVersion: null, cancellationToken: cancellationToken);
+        }
     }
 
     private static readonly string[] SchemaStatements =
@@ -33,6 +39,7 @@ public sealed class SqliteDatabaseInitializer
         CREATE TABLE IF NOT EXISTS workflow_definitions (
             workflow_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
             definition_json TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -42,6 +49,7 @@ public sealed class SqliteDatabaseInitializer
         CREATE TABLE IF NOT EXISTS workflow_instances (
             instance_id TEXT PRIMARY KEY,
             workflow_id TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
             current_status TEXT NOT NULL,
             context_json TEXT NOT NULL,
             last_evaluation_json TEXT NULL,
@@ -81,4 +89,31 @@ public sealed class SqliteDatabaseInitializer
         );
         """
     };
+
+    private static async Task EnsureColumnAsync(
+        SqliteConnection connection,
+        string tableName,
+        string columnName,
+        string columnDefinition,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName});";
+
+        var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            existingColumns.Add(reader.GetString(1));
+        }
+
+        if (existingColumns.Contains(columnName))
+        {
+            return;
+        }
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefinition};";
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
 }

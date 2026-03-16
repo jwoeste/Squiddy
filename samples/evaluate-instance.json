@@ -1,9 +1,7 @@
 {
-  "workflowId": "underwriting",
-  "instanceId": "application-123",
-  "currentStatus": "Submitted",
+  "commandCode": "REFER",
+  "expectedVersion": 1,
   "context": {
-    "riskScore": "LOW",
-    "documentsComplete": "true"
+    "underwriterAssigned": "jwoeste"
   }
 }

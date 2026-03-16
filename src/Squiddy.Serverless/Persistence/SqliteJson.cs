@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Squiddy.Serverless.Persistence;
 
@@ -6,7 +7,11 @@ public static class SqliteJson
 {
     public static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
-        WriteIndented = true
+        WriteIndented = true,
+        Converters =
+        {
+            new JsonStringEnumConverter()
+        }
     };
 
     public static string Serialize<T>(T value) =>

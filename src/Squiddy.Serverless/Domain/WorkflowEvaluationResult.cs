@@ -11,11 +11,12 @@ public sealed record ActionEvaluation(
     string ActionCode,
     string ActionName,
     string TargetStatus,
-    bool IsStraightThroughProcessing,
+    WorkflowActionMode Mode,
     bool ConditionsMet);
 
 public sealed record AppliedAction(
     string ActionCode,
+    string ActionName,
     string FromStatus,
     string ToStatus,
     bool AppliedAutomatically);

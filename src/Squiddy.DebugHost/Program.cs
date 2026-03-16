@@ -42,10 +42,12 @@ app.MapGet("/workflows/{workflowId}", async Task<IResult> (string workflowId) =>
 app.MapPost("/workflows", async Task<IResult> (SaveWorkflowDefinitionRequest saveWorkflowRequest) =>
         await InvokeLambdaWithBodyAsync("POST", "/workflows", saveWorkflowRequest))
     .WithName("SaveWorkflow")
-    .WithSummary("Creates or updates a workflow definition in SQLite.")
+    .WithSummary("Creates or updates a workflow definition with optimistic version checks.")
     .WithOpenApi()
     .Produces(StatusCodes.Status201Created, contentType: "application/json")
-    .Produces(StatusCodes.Status400BadRequest);
+    .Produces(StatusCodes.Status200OK, contentType: "application/json")
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status409Conflict);
 
 app.MapDelete("/workflows/{workflowId}", async Task<IResult> (string workflowId) =>
         await InvokeLambdaNotFoundAsync("DELETE", $"/workflows/{workflowId}", $"Workflow '{workflowId}' was not found."))
@@ -75,14 +77,24 @@ app.MapGet("/workflow-instances/{instanceId}/audit-trail", async Task<IResult> (
     .Produces(StatusCodes.Status200OK, contentType: "application/json")
     .Produces(StatusCodes.Status404NotFound);
 
-app.MapPost("/workflow-instances/evaluate", async Task<IResult> (EvaluateWorkflowInstanceRequest evaluateWorkflowInstanceRequest) =>
-        await InvokeLambdaWithBodyAsync("POST", "/workflow-instances/evaluate", evaluateWorkflowInstanceRequest))
-    .WithName("EvaluateWorkflowInstance")
-    .WithSummary("Evaluates a stored workflow and persists workflow instance state in SQLite.")
+app.MapPost("/workflow-instances", async Task<IResult> (CreateWorkflowInstanceRequest createWorkflowInstanceRequest) =>
+        await InvokeLambdaWithBodyAsync("POST", "/workflow-instances", createWorkflowInstanceRequest))
+    .WithName("CreateWorkflowInstance")
+    .WithSummary("Creates a workflow instance from the workflow's initial status and applies automatic transitions.")
+    .WithOpenApi()
+    .Produces(StatusCodes.Status201Created, contentType: "application/json")
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status404NotFound);
+
+app.MapPost("/workflow-instances/{instanceId}/commands", async Task<IResult> (string instanceId, ExecuteWorkflowInstanceCommandRequest commandRequest) =>
+        await InvokeLambdaWithBodyAsync("POST", $"/workflow-instances/{instanceId}/commands", commandRequest))
+    .WithName("ExecuteWorkflowInstanceCommand")
+    .WithSummary("Applies a manual workflow command with optimistic version checks, then runs any automatic transitions.")
     .WithOpenApi()
     .Produces(StatusCodes.Status200OK, contentType: "application/json")
     .Produces(StatusCodes.Status400BadRequest)
-    .Produces(StatusCodes.Status404NotFound);
+    .Produces(StatusCodes.Status404NotFound)
+    .Produces(StatusCodes.Status409Conflict);
 
 app.MapGet("/workflow-instances/{instanceId}", async Task<IResult> (string instanceId) =>
         await InvokeLambdaNotFoundAsync("GET", $"/workflow-instances/{instanceId}", $"Workflow instance '{instanceId}' was not found."))
