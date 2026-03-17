@@ -3,6 +3,7 @@ namespace Squiddy.Serverless;
 public sealed record WorkflowInstance(
     string Id,
     string WorkflowId,
+    int WorkflowVersion,
     int Version,
     string CurrentStatus,
     IReadOnlyDictionary<string, string?> Context,

@@ -20,7 +20,7 @@ public sealed class SqliteWorkflowInstanceRepository
         command.Transaction = transaction;
         command.CommandText =
             """
-            SELECT instance_id, workflow_id, version, current_status, context_json, last_evaluation_json, created_at, updated_at
+            SELECT instance_id, workflow_id, workflow_version, version, current_status, context_json, last_evaluation_json, created_at, updated_at
             FROM workflow_instances
             WHERE instance_id = $instanceId;
             """;
@@ -51,6 +51,7 @@ public sealed class SqliteWorkflowInstanceRepository
                 INSERT INTO workflow_instances (
                     instance_id,
                     workflow_id,
+                    workflow_version,
                     version,
                     current_status,
                     context_json,
@@ -60,6 +61,7 @@ public sealed class SqliteWorkflowInstanceRepository
                 VALUES (
                     $instanceId,
                     $workflowId,
+                    $workflowVersion,
                     $version,
                     $currentStatus,
                     $contextJson,
@@ -80,6 +82,7 @@ public sealed class SqliteWorkflowInstanceRepository
             UPDATE workflow_instances
             SET
                 workflow_id = $workflowId,
+                workflow_version = $workflowVersion,
                 version = $version,
                 current_status = $currentStatus,
                 context_json = $contextJson,
@@ -105,7 +108,7 @@ public sealed class SqliteWorkflowInstanceRepository
         await using var command = _connection.CreateCommand();
         command.CommandText =
             """
-            SELECT instance_id, workflow_id, version, current_status, context_json, last_evaluation_json, created_at, updated_at
+            SELECT instance_id, workflow_id, workflow_version, version, current_status, context_json, last_evaluation_json, created_at, updated_at
             FROM workflow_instances
             ORDER BY updated_at DESC, instance_id;
             """;
@@ -136,27 +139,73 @@ public sealed class SqliteWorkflowInstanceRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task<bool> AnyForWorkflowVersionAsync(
+        string workflowId,
+        int workflowVersion,
+        SqliteTransaction? transaction = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            SELECT 1
+            FROM workflow_instances
+            WHERE workflow_id = $workflowId
+              AND workflow_version = $workflowVersion
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$workflowId", workflowId);
+        command.Parameters.AddWithValue("$workflowVersion", workflowVersion);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is not null;
+    }
+
+    public async Task<bool> AnyForWorkflowVersionsNewerThanAsync(
+        string workflowId,
+        int workflowVersion,
+        SqliteTransaction? transaction = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            SELECT 1
+            FROM workflow_instances
+            WHERE workflow_id = $workflowId
+              AND workflow_version > $workflowVersion
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$workflowId", workflowId);
+        command.Parameters.AddWithValue("$workflowVersion", workflowVersion);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is not null;
+    }
+
     private static WorkflowInstance ReadWorkflowInstance(SqliteDataReader reader)
     {
-        var lastEvaluation = reader.IsDBNull(5)
+        var lastEvaluation = reader.IsDBNull(6)
             ? null
-            : SqliteJson.Deserialize<WorkflowEvaluationResult>(reader.GetString(5));
+            : SqliteJson.Deserialize<WorkflowEvaluationResult>(reader.GetString(6));
 
         return new WorkflowInstance(
             reader.GetString(0),
             reader.GetString(1),
             reader.GetInt32(2),
-            reader.GetString(3),
-            SqliteJson.Deserialize<Dictionary<string, string?>>(reader.GetString(4)),
+            reader.GetInt32(3),
+            reader.GetString(4),
+            SqliteJson.Deserialize<Dictionary<string, string?>>(reader.GetString(5)),
             lastEvaluation,
-            DateTimeOffset.Parse(reader.GetString(6)),
-            DateTimeOffset.Parse(reader.GetString(7)));
+            DateTimeOffset.Parse(reader.GetString(7)),
+            DateTimeOffset.Parse(reader.GetString(8)));
     }
 
     private static void BindInstance(SqliteCommand command, WorkflowInstance instance)
     {
         command.Parameters.AddWithValue("$instanceId", instance.Id);
         command.Parameters.AddWithValue("$workflowId", instance.WorkflowId);
+        command.Parameters.AddWithValue("$workflowVersion", instance.WorkflowVersion);
         command.Parameters.AddWithValue("$version", instance.Version);
         command.Parameters.AddWithValue("$currentStatus", instance.CurrentStatus);
         command.Parameters.AddWithValue("$contextJson", SqliteJson.Serialize(instance.Context));

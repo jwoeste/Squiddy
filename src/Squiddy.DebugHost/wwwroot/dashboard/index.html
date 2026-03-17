@@ -9,11 +9,17 @@
 <body>
     <div class="shell">
         <header class="hero">
-            <div>
-                <p class="eyebrow">Workflow Studio</p>
-                <h1>Design workflows visually, then save them directly to the local engine.</h1>
+            <div class="hero-copy-block">
+                <div class="terminal-strip" aria-label="Terminal status">
+                    <span class="terminal-pill terminal-pill-orange">SQDY &lt;GO&gt;</span>
+                    <span class="terminal-pill">WF Studio</span>
+                    <span class="terminal-pill terminal-pill-cyan">Local Engine</span>
+                    <span class="terminal-pill terminal-pill-green">SQLite Online</span>
+                </div>
+                <p class="eyebrow">Workflow Monitor</p>
+                <h1>Workflows</h1>
                 <p class="hero-copy">
-                    Draw statuses on a canvas, connect them with transitions, and fine-tune actions and rules without hand-editing JSON.
+                    Wire statuses, inspect commands, and publish revisions from a high-contrast operations console built for dense workflow editing.
                 </p>
             </div>
             <div class="hero-actions">
@@ -29,6 +35,38 @@
                     <p class="panel-kicker">Catalog</p>
                     <h2>Workflow library</h2>
                 </div>
+                <section class="form-card category-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Categories</p>
+                            <h3>Workflow categories</h3>
+                        </div>
+                        <div class="toolbar">
+                            <button id="add-category-button" class="ghost-button" type="button">Add</button>
+                            <button id="edit-category-button" class="ghost-button" type="button">Edit</button>
+                            <button id="delete-category-button" class="danger-button" type="button">Delete</button>
+                        </div>
+                    </div>
+                    <div class="field-grid">
+                        <label class="field">
+                            <span class="field-label">Category ID</span>
+                            <input id="category-id" class="text-input" type="text" placeholder="claims">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Category name</span>
+                            <input id="category-name" class="text-input" type="text" placeholder="Claims">
+                        </label>
+                    </div>
+                    <label class="field">
+                        <span class="field-label">Category description</span>
+                        <textarea id="category-description" class="text-area" placeholder="Describe this category."></textarea>
+                    </label>
+                    <div class="toolbar">
+                        <button id="save-category-button" class="primary-button" type="button">Save Category</button>
+                        <button id="reset-category-button" class="ghost-button" type="button">Reset</button>
+                    </div>
+                    <div id="category-list" class="category-list"></div>
+                </section>
                 <label class="field-label" for="workflow-search">Search workflows</label>
                 <input id="workflow-search" class="text-input" type="search" placeholder="Filter by id or name">
                 <div id="workflow-list" class="workflow-list"></div>
@@ -55,6 +93,12 @@
                                 <input id="workflow-id" class="text-input" name="workflowId" type="text" placeholder="underwriting" required>
                             </label>
                             <label class="field">
+                                <span class="field-label">Category</span>
+                                <select id="workflow-category" class="text-input" name="workflowCategory" required></select>
+                            </label>
+                        </div>
+                        <div class="field-grid">
+                            <label class="field">
                                 <span class="field-label">Workflow name</span>
                                 <input id="workflow-name" class="text-input" name="workflowName" type="text" placeholder="Underwriting Workflow" required>
                             </label>
@@ -68,6 +112,30 @@
                                 <span class="field-label">Initial status</span>
                                 <select id="workflow-initial-status" class="text-input" name="workflowInitialStatus"></select>
                             </label>
+                        </div>
+                    </section>
+
+                    <section class="form-card version-card">
+                        <div class="section-title-row">
+                            <div>
+                                <p class="panel-kicker">Revisions</p>
+                                <h3>Version history</h3>
+                            </div>
+                        </div>
+                        <div class="field-grid">
+                            <label class="field">
+                                <span class="field-label">Selected version</span>
+                                <select id="workflow-version-select" class="text-input"></select>
+                            </label>
+                            <div class="field">
+                                <span class="field-label">Revision state</span>
+                                <div id="workflow-version-summary" class="version-summary"></div>
+                            </div>
+                        </div>
+                        <div class="toolbar">
+                            <button id="view-latest-button" class="ghost-button" type="button">View Latest</button>
+                            <button id="edit-version-button" class="ghost-button" type="button">Edit As New Version</button>
+                            <button id="rollback-version-button" class="danger-button" type="button">Rollback To Selected</button>
                         </div>
                     </section>
 
@@ -113,7 +181,6 @@
                         <button id="delete-button" class="danger-button" type="button" disabled>Delete</button>
                     </div>
                 </form>
-                <div id="form-message" class="message-banner" aria-live="polite"></div>
             </section>
 
             <section class="panel inspector-panel">
@@ -132,6 +199,10 @@
             <p class="empty-copy"></p>
         </div>
     </template>
+
+    <div class="terminal-alert-dock" aria-live="polite">
+        <div id="form-message" class="message-banner"></div>
+    </div>
 
     <script src="/dashboard/app.js"></script>
 </body>

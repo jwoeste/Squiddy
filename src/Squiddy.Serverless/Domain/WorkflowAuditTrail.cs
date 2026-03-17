@@ -4,6 +4,7 @@ public sealed record WorkflowAuditTransaction(
     string TransactionId,
     string InstanceId,
     string WorkflowId,
+    int WorkflowVersion,
     string TriggerSource,
     string? ActorId,
     string? CorrelationId,

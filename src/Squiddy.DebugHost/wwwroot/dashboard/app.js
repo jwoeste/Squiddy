@@ -8,8 +8,13 @@ const MAX_ZOOM = 1.8;
 const ZOOM_STEP = 0.1;
 
 const state = {
+    categories: [],
+    selectedCategoryId: null,
+    categoryDraft: emptyCategory(),
     workflows: [],
     selectedWorkflowId: null,
+    selectedWorkflowVersion: null,
+    versionHistory: [],
     filter: "",
     draft: emptyWorkflow(),
     layout: {},
@@ -18,22 +23,39 @@ const state = {
     connectMode: false,
     connectionSource: null,
     drag: null,
-    zoom: 1
+    zoom: 1,
+    isBusy: false,
+    isEditingDetachedVersion: false
 };
 
 const workflowList = document.getElementById("workflow-list");
 const workflowSearch = document.getElementById("workflow-search");
 const workflowForm = document.getElementById("workflow-form");
 const workflowIdInput = document.getElementById("workflow-id");
+const workflowCategoryInput = document.getElementById("workflow-category");
+const categoryIdInput = document.getElementById("category-id");
+const categoryNameInput = document.getElementById("category-name");
+const categoryDescriptionInput = document.getElementById("category-description");
 const workflowNameInput = document.getElementById("workflow-name");
 const workflowDescriptionInput = document.getElementById("workflow-description");
 const workflowInitialStatusInput = document.getElementById("workflow-initial-status");
 const previewSummary = document.getElementById("preview-summary");
 const workflowJsonPreview = document.getElementById("workflow-json-preview");
+const categoryList = document.getElementById("category-list");
+const workflowVersionSelect = document.getElementById("workflow-version-select");
+const workflowVersionSummary = document.getElementById("workflow-version-summary");
 const refreshButton = document.getElementById("refresh-button");
 const newWorkflowButton = document.getElementById("new-workflow-button");
 const resetButton = document.getElementById("reset-button");
 const deleteButton = document.getElementById("delete-button");
+const addCategoryButton = document.getElementById("add-category-button");
+const editCategoryButton = document.getElementById("edit-category-button");
+const deleteCategoryButton = document.getElementById("delete-category-button");
+const saveCategoryButton = document.getElementById("save-category-button");
+const resetCategoryButton = document.getElementById("reset-category-button");
+const viewLatestButton = document.getElementById("view-latest-button");
+const editVersionButton = document.getElementById("edit-version-button");
+const rollbackVersionButton = document.getElementById("rollback-version-button");
 const addStatusButton = document.getElementById("add-status-button");
 const connectButton = document.getElementById("connect-button");
 const autoLayoutButton = document.getElementById("autolayout-button");
@@ -69,6 +91,11 @@ workflowIdInput.addEventListener("input", () => {
     renderJsonPreview();
 });
 
+workflowCategoryInput.addEventListener("change", () => {
+    state.draft.categoryId = workflowCategoryInput.value;
+    renderJsonPreview();
+});
+
 workflowNameInput.addEventListener("input", () => {
     state.draft.name = workflowNameInput.value.trim();
     renderWorkflowHeader();
@@ -90,18 +117,55 @@ workflowInitialStatusInput.addEventListener("change", () => {
 });
 
 refreshButton.addEventListener("click", loadWorkflows);
-newWorkflowButton.addEventListener("click", () => selectWorkflow(null));
+newWorkflowButton.addEventListener("click", () => {
+    const draft = emptyWorkflow();
+    draft.categoryId = state.selectedCategoryId ?? draft.categoryId;
+    selectWorkflow(draft);
+});
 resetButton.addEventListener("click", () => {
-    const selected = getSelectedWorkflow();
-    if (selected) {
-        selectWorkflow(selected);
-    } else {
-        selectWorkflow(null);
+    if (state.selectedWorkflowId) {
+        void openWorkflow(state.selectedWorkflowId, state.selectedWorkflowVersion, { skipBusy: false });
+        return;
     }
 
+    selectWorkflow(null);
     setMessage("");
 });
 deleteButton.addEventListener("click", deleteCurrentWorkflow);
+addCategoryButton.addEventListener("click", createCategory);
+editCategoryButton.addEventListener("click", editSelectedCategory);
+deleteCategoryButton.addEventListener("click", deleteSelectedCategory);
+saveCategoryButton.addEventListener("click", () => saveCategory(state.categoryDraft, state.categoryDraft.originalCategoryId ?? null));
+resetCategoryButton.addEventListener("click", resetCategoryDraft);
+workflowVersionSelect.addEventListener("change", async () => {
+    if (!state.selectedWorkflowId) {
+        return;
+    }
+
+    const version = Number(workflowVersionSelect.value);
+    if (!version) {
+        return;
+    }
+
+    await openWorkflow(state.selectedWorkflowId, version);
+});
+viewLatestButton.addEventListener("click", async () => {
+    if (!state.selectedWorkflowId) {
+        return;
+    }
+
+    await openWorkflow(state.selectedWorkflowId);
+});
+editVersionButton.addEventListener("click", () => {
+    if (!state.selectedWorkflowId || !getSelectedVersionInfo()) {
+        return;
+    }
+
+    state.isEditingDetachedVersion = true;
+    setMessage(`Editing ${state.draft.id} as a new version.`);
+    renderDraft();
+});
+rollbackVersionButton.addEventListener("click", rollbackSelectedVersion);
 addStatusButton.addEventListener("click", () => {
     const status = createStatus();
     state.draft.statuses.push(status);
@@ -288,14 +352,26 @@ async function loadWorkflows() {
     setMessage("");
 
     try {
+        state.categories = await fetchJson("/workflow-categories");
+        if (state.selectedCategoryId && !state.categories.some(category => category.id === state.selectedCategoryId)) {
+            state.selectedCategoryId = null;
+        }
+
         state.workflows = await fetchJson("/workflows");
         if (state.selectedWorkflowId && !state.workflows.some(workflow => workflow.id === state.selectedWorkflowId)) {
             state.selectedWorkflowId = null;
+            state.selectedWorkflowVersion = null;
+            state.versionHistory = [];
+            state.isEditingDetachedVersion = false;
         }
 
+        renderCategoryList();
         renderWorkflowList();
-        const selected = getSelectedWorkflow();
-        selectWorkflow(selected);
+        if (state.selectedWorkflowId) {
+            await openWorkflow(state.selectedWorkflowId, state.selectedWorkflowVersion, { skipBusy: true });
+        } else {
+            selectWorkflow(null);
+        }
     } catch (error) {
         setMessage(`Failed to load workflows. ${error.message}`, true);
     } finally {
@@ -307,6 +383,10 @@ async function saveWorkflow() {
     let workflow;
 
     try {
+        if (isDraftReadOnly()) {
+            throw new Error("This version is read-only. Choose Edit As New Version or roll back first.");
+        }
+
         syncDraftFromVisibleEditors();
         workflow = serializeDraft();
         validateWorkflow(workflow);
@@ -323,22 +403,18 @@ async function saveWorkflow() {
         const expectedVersion = selectedWorkflow?.id === workflow.id
             ? selectedWorkflow.version ?? null
             : null;
-        await fetchJson("/workflows", {
+        const savedWorkflow = await fetchJson("/workflows", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ workflow, expectedVersion })
         });
 
-        const persistedWorkflow = await fetchJson(`/workflows/${encodeURIComponent(workflow.id)}`);
-        const persistenceMismatches = findPersistenceMismatches(workflow, persistedWorkflow);
-        if (persistenceMismatches.length) {
-            throw new Error(`Persisted workflow differs from editor state: ${persistenceMismatches.join(", ")}`);
-        }
-
         persistLayout(workflow.id);
-        state.selectedWorkflowId = workflow.id;
+        state.selectedWorkflowId = savedWorkflow.id;
+        state.selectedWorkflowVersion = savedWorkflow.version ?? null;
+        state.isEditingDetachedVersion = false;
         await loadWorkflows();
-        setMessage(`Workflow '${workflow.id}' saved.`);
+        setMessage(`Workflow '${savedWorkflow.id}' saved as v${savedWorkflow.version}.`);
     } catch (error) {
         setMessage(`Save failed. ${error.message}`, true);
     } finally {
@@ -346,8 +422,227 @@ async function saveWorkflow() {
     }
 }
 
+async function openWorkflow(workflowId, version = null, options = {}) {
+    const { skipBusy = false } = options;
+
+    if (!skipBusy) {
+        setBusy(true);
+        setMessage("");
+    }
+
+    try {
+        const versionHistory = await fetchJson(`/workflows/${encodeURIComponent(workflowId)}/versions`);
+        const latestVersion = versionHistory.find(item => item.isLatest) ?? versionHistory[0] ?? null;
+        const selectedVersion = version && versionHistory.some(item => item.version === version)
+            ? versionHistory.find(item => item.version === version)
+            : latestVersion;
+
+        if (!selectedVersion) {
+            throw new Error(`No persisted versions were found for workflow '${workflowId}'.`);
+        }
+
+        const workflow = selectedVersion.isLatest
+            ? state.workflows.find(item => item.id === workflowId) ?? await fetchJson(`/workflows/${encodeURIComponent(workflowId)}`)
+            : await fetchJson(`/workflows/${encodeURIComponent(workflowId)}/versions/${selectedVersion.version}`);
+
+        selectWorkflow(workflow, {
+            versionHistory,
+            selectedWorkflowVersion: selectedVersion.version,
+            isEditingDetachedVersion: false
+        });
+    } catch (error) {
+        setMessage(`Failed to open workflow. ${error.message}`, true);
+    } finally {
+        if (!skipBusy) {
+            setBusy(false);
+        }
+    }
+}
+
+async function rollbackSelectedVersion() {
+    const versionInfo = getSelectedVersionInfo();
+    if (!state.selectedWorkflowId || !versionInfo || !canRollbackSelectedVersion()) {
+        return;
+    }
+
+    if (!window.confirm(`Rollback '${state.selectedWorkflowId}' to version ${versionInfo.version}? Newer versions will be deleted.`)) {
+        return;
+    }
+
+    setBusy(true);
+    setMessage("Rolling back workflow...");
+
+    try {
+        const result = await fetchJson(`/workflows/${encodeURIComponent(state.selectedWorkflowId)}/rollback`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ targetVersion: versionInfo.version })
+        });
+
+        state.selectedWorkflowId = result.workflow.id;
+        state.selectedWorkflowVersion = result.workflow.version;
+        state.versionHistory = result.versions ?? [];
+        state.isEditingDetachedVersion = false;
+        await loadWorkflows();
+        setMessage(`Workflow '${result.workflow.id}' rolled back to v${result.workflow.version}.`);
+    } catch (error) {
+        setMessage(`Rollback failed. ${error.message}`, true);
+    } finally {
+        setBusy(false);
+    }
+}
+
+async function createCategory() {
+    state.categoryDraft = {
+        id: uniqueCategoryId(),
+        name: "",
+        description: "",
+        originalCategoryId: null
+    };
+    renderCategoryEditor();
+    categoryIdInput.focus();
+}
+
+async function editSelectedCategory() {
+    const category = getSelectedCategory();
+    if (!category) {
+        return;
+    }
+
+    state.categoryDraft = {
+        id: category.id,
+        name: category.name,
+        description: category.description ?? "",
+        originalCategoryId: category.id
+    };
+    renderCategoryEditor();
+    categoryNameInput.focus();
+}
+
+async function saveCategory(category, originalCategoryId = null) {
+    const normalizedCategory = {
+        id: slugifyIdentifier(categoryIdInput.value || category.id),
+        name: categoryNameInput.value.trim() || category.name?.trim() || "",
+        description: categoryDescriptionInput.value.trim() || category.description?.trim() || ""
+    };
+
+    if (!normalizedCategory.id) {
+        setMessage("Category ID is required.", true);
+        categoryIdInput.focus();
+        return;
+    }
+
+    if (!normalizedCategory.name) {
+        setMessage("Category name is required.", true);
+        categoryNameInput.focus();
+        return;
+    }
+
+    setBusy(true);
+    setMessage("Saving category...");
+
+    try {
+        const savedCategory = await fetchJson("/workflow-categories", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                category: {
+                    id: normalizedCategory.id,
+                    name: normalizedCategory.name,
+                    description: normalizedCategory.description,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                },
+                originalCategoryId
+            })
+        });
+
+        if (originalCategoryId && state.draft.categoryId === originalCategoryId) {
+            state.draft.categoryId = savedCategory.id;
+        }
+
+        state.selectedCategoryId = savedCategory.id;
+        state.categoryDraft = {
+            id: savedCategory.id,
+            name: savedCategory.name,
+            description: savedCategory.description ?? "",
+            originalCategoryId: savedCategory.id
+        };
+        await loadWorkflows();
+        setMessage(`Category '${savedCategory.name}' saved.`);
+    } catch (error) {
+        setMessage(`Category save failed. ${error.message}`, true);
+    } finally {
+        setBusy(false);
+    }
+}
+
+async function deleteSelectedCategory() {
+    const category = getSelectedCategory();
+    if (!category) {
+        return;
+    }
+
+    if (!window.confirm(`Delete category '${category.name}'?`)) {
+        return;
+    }
+
+    setBusy(true);
+    setMessage("Deleting category...");
+
+    try {
+        const response = await fetch(`/workflow-categories/${encodeURIComponent(category.id)}`, {
+            method: "DELETE",
+            cache: "no-store",
+            headers: {
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache"
+            }
+        });
+
+        if (!response.ok) {
+            const detail = await response.text();
+            throw new Error(detail || `/workflow-categories/${category.id} returned ${response.status}`);
+        }
+
+        if (state.draft.categoryId === category.id) {
+            state.draft.categoryId = "general";
+        }
+
+        state.selectedCategoryId = "general";
+        await loadWorkflows();
+        setMessage(`Category '${category.name}' deleted.`);
+    } catch (error) {
+        setMessage(`Category delete failed. ${error.message}`, true);
+    } finally {
+        setBusy(false);
+    }
+}
+
+function resetCategoryDraft() {
+    const selectedCategory = getSelectedCategory();
+    state.categoryDraft = selectedCategory
+        ? {
+            id: selectedCategory.id,
+            name: selectedCategory.name,
+            description: selectedCategory.description ?? "",
+            originalCategoryId: selectedCategory.id
+        }
+        : emptyCategory();
+    renderCategoryEditor();
+}
+
 async function deleteCurrentWorkflow() {
     const workflow = getSelectedWorkflow();
+    if (!workflow) {
+        return;
+    }
+
+    await deleteWorkflowById(workflow.id);
+}
+
+async function deleteWorkflowById(workflowId) {
+    const workflow = state.workflows.find(item => item.id === workflowId);
     if (!workflow) {
         return;
     }
@@ -361,7 +656,12 @@ async function deleteCurrentWorkflow() {
 
     try {
         const response = await fetch(`/workflows/${encodeURIComponent(workflow.id)}`, {
-            method: "DELETE"
+            method: "DELETE",
+            cache: "no-store",
+            headers: {
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache"
+            }
         });
 
         if (!response.ok) {
@@ -380,9 +680,12 @@ async function deleteCurrentWorkflow() {
     }
 }
 
-function selectWorkflow(workflow) {
+function selectWorkflow(workflow, options = {}) {
     const normalized = normalizeWorkflow(workflow ?? emptyWorkflow());
     state.selectedWorkflowId = workflow?.id ?? null;
+    state.selectedWorkflowVersion = options.selectedWorkflowVersion ?? workflow?.version ?? null;
+    state.versionHistory = options.versionHistory ?? (workflow ? state.versionHistory : []);
+    state.isEditingDetachedVersion = options.isEditingDetachedVersion ?? false;
     state.draft = normalized;
     state.layout = normalizeLayout(loadLayout(workflow?.id), normalized.statuses);
     state.selectedStatusCode = normalized.statuses[0]?.code ?? null;
@@ -396,28 +699,36 @@ function selectWorkflow(workflow) {
 
 function populateForm() {
     workflowIdInput.value = state.draft.id ?? "";
+    renderCategoryOptions();
     workflowNameInput.value = state.draft.name ?? "";
     workflowDescriptionInput.value = state.draft.description ?? "";
-    deleteButton.disabled = !getSelectedWorkflow();
     renderInitialStatusOptions();
     renderWorkflowHeader();
+    renderVersionHistory();
+    applyEditorLockState();
 }
 
 function renderDraft() {
     renderWorkflowHeader();
+    renderCategoryOptions();
     renderInitialStatusOptions();
+    renderVersionHistory();
     renderSummary();
     renderCanvas();
     renderInspector();
     renderJsonPreview();
+    applyEditorLockState();
 }
 
 function renderDerivedState(options = {}) {
     renderWorkflowHeader();
+    renderCategoryOptions();
     renderInitialStatusOptions();
+    renderVersionHistory();
     renderSummary();
     renderCanvas();
     renderJsonPreview();
+    applyEditorLockState();
 
     if (options.includeWorkflowList) {
         renderWorkflowList();
@@ -427,7 +738,164 @@ function renderDerivedState(options = {}) {
 function renderWorkflowHeader() {
     const isSaved = !!getSelectedWorkflow();
     const workflowName = state.draft.name || "Untitled workflow";
-    editorTitle.textContent = isSaved ? `Edit ${workflowName}` : "Create workflow";
+    const versionSuffix = state.selectedWorkflowVersion ? ` v${state.selectedWorkflowVersion}` : "";
+    editorTitle.textContent = isSaved
+        ? `${state.isEditingDetachedVersion ? "Edit new revision of" : "Edit"} ${workflowName}${versionSuffix}`
+        : "Create workflow";
+}
+
+function renderCategoryOptions() {
+    const categories = state.categories ?? [];
+
+    if (!categories.length) {
+        workflowCategoryInput.innerHTML = '<option value="">No categories</option>';
+        workflowCategoryInput.disabled = true;
+        state.draft.categoryId = "";
+        return;
+    }
+
+    workflowCategoryInput.innerHTML = categories.map(category => `
+        <option value="${escapeHtml(category.id)}" ${category.id === state.draft.categoryId ? "selected" : ""}>
+            ${escapeHtml(category.name)}
+        </option>
+    `).join("");
+
+    workflowCategoryInput.disabled = false;
+    if (!categories.some(category => category.id === state.draft.categoryId)) {
+        state.draft.categoryId = categories[0].id;
+    }
+
+    workflowCategoryInput.value = state.draft.categoryId;
+}
+
+function renderCategoryList() {
+    addCategoryButton.disabled = state.isBusy;
+    renderCategoryEditor();
+
+    const allCard = `
+        <article class="workflow-card ${state.selectedCategoryId === null ? "selected" : ""}" data-category-id="">
+            <div class="workflow-card-header">
+                <div>
+                    <h3 class="workflow-card-title">All Categories</h3>
+                    <p class="workflow-meta">catalog</p>
+                </div>
+                <div class="workflow-card-actions">
+                    <span class="pill">${escapeHtml(String(state.workflows.length))} workflows</span>
+                </div>
+            </div>
+        </article>
+    `;
+
+    if (!state.categories.length) {
+        categoryList.innerHTML = `${allCard}${createEmptyCategoryCardHtml()}`;
+        editCategoryButton.disabled = true;
+        deleteCategoryButton.disabled = true;
+        bindCategoryCards();
+        return;
+    }
+
+    categoryList.innerHTML = `${allCard}${state.categories.map(category => `
+        <article class="workflow-card ${category.id === state.selectedCategoryId ? "selected" : ""}" data-category-id="${escapeHtml(category.id)}">
+            <div class="workflow-card-header">
+                <div>
+                    <h3 class="workflow-card-title">${escapeHtml(category.name)}</h3>
+                    <p class="workflow-meta">${escapeHtml(category.id)}</p>
+                </div>
+                <div class="workflow-card-actions">
+                    ${category.id === "general" ? '<span class="pill">Default</span>' : ""}
+                </div>
+            </div>
+            <div class="status-badges">
+                <span class="pill">${escapeHtml(String(countWorkflowsForCategory(category.id)))} workflows</span>
+            </div>
+        </article>
+    `).join("")}`;
+
+    bindCategoryCards();
+
+    editCategoryButton.disabled = state.isBusy || !getSelectedCategory();
+    deleteCategoryButton.disabled = state.isBusy || !getSelectedCategory() || state.selectedCategoryId === "general";
+}
+
+function bindCategoryCards() {
+    for (const card of categoryList.querySelectorAll("[data-category-id]")) {
+        card.addEventListener("click", () => {
+            const categoryId = card.dataset.categoryId || null;
+            state.selectedCategoryId = categoryId;
+            resetCategoryDraft();
+            renderCategoryList();
+            renderWorkflowList();
+        });
+    }
+}
+
+function createEmptyCategoryCardHtml() {
+    return `
+        <div class="empty-state">
+            <p class="empty-title">No categories</p>
+            <p class="empty-copy">Add a workflow category to start organizing definitions.</p>
+        </div>
+    `;
+}
+
+function renderCategoryEditor() {
+    categoryIdInput.value = state.categoryDraft.id ?? "";
+    categoryNameInput.value = state.categoryDraft.name ?? "";
+    categoryDescriptionInput.value = state.categoryDraft.description ?? "";
+    categoryIdInput.readOnly = state.isBusy;
+    categoryNameInput.readOnly = state.isBusy;
+    categoryDescriptionInput.readOnly = state.isBusy;
+    saveCategoryButton.disabled = state.isBusy;
+    resetCategoryButton.disabled = state.isBusy;
+}
+
+function renderVersionHistory() {
+    if (!state.selectedWorkflowId || !state.versionHistory.length) {
+        workflowVersionSelect.innerHTML = '<option value="">Unsaved draft</option>';
+        workflowVersionSelect.disabled = true;
+        workflowVersionSummary.innerHTML = '<span class="pill">No persisted revisions yet</span>';
+        viewLatestButton.disabled = true;
+        editVersionButton.disabled = true;
+        rollbackVersionButton.disabled = true;
+        return;
+    }
+
+    workflowVersionSelect.disabled = state.isBusy;
+    workflowVersionSelect.innerHTML = state.versionHistory.map(version => `
+        <option value="${escapeHtml(String(version.version))}" ${version.version === state.selectedWorkflowVersion ? "selected" : ""}>
+            v${escapeHtml(String(version.version))}${version.isLatest ? " latest" : ""}${version.instanceCount ? ` - ${version.instanceCount} instance${version.instanceCount === 1 ? "" : "s"}` : ""}
+        </option>
+    `).join("");
+
+    const selectedVersion = getSelectedVersionInfo();
+    const latestVersion = getLatestVersionInfo();
+    const summaryPills = [];
+
+    summaryPills.push(`<span class="pill">Selected v${escapeHtml(String(selectedVersion?.version ?? latestVersion?.version ?? ""))}</span>`);
+    if (selectedVersion?.isLatest) {
+        summaryPills.push('<span class="pill">Latest</span>');
+    } else {
+        summaryPills.push('<span class="pill">Archive</span>');
+    }
+
+    if (selectedVersion?.instanceCount) {
+        summaryPills.push(`<span class="pill">${escapeHtml(String(selectedVersion.instanceCount))} instances</span>`);
+    } else {
+        summaryPills.push('<span class="pill">No instances</span>');
+    }
+
+    if (isDraftReadOnly()) {
+        summaryPills.push('<span class="pill">Read only</span>');
+    } else if (state.isEditingDetachedVersion) {
+        summaryPills.push('<span class="pill">Editing as new</span>');
+    } else {
+        summaryPills.push('<span class="pill">Editable</span>');
+    }
+
+    workflowVersionSummary.innerHTML = summaryPills.join("");
+    viewLatestButton.disabled = state.isBusy || !selectedVersion || selectedVersion.isLatest;
+    editVersionButton.disabled = state.isBusy || !selectedVersion;
+    rollbackVersionButton.disabled = state.isBusy || !canRollbackSelectedVersion();
 }
 
 function renderInitialStatusOptions() {
@@ -463,6 +931,10 @@ function renderSummary() {
 
 function renderWorkflowList() {
     const filtered = state.workflows.filter(workflow => {
+        if (state.selectedCategoryId && workflow.categoryId !== state.selectedCategoryId) {
+            return false;
+        }
+
         if (!state.filter) {
             return true;
         }
@@ -474,7 +946,11 @@ function renderWorkflowList() {
     if (!filtered.length) {
         workflowList.replaceChildren(createEmptyState(
             "No workflows match",
-            state.filter ? "Try a different search term." : "Create your first workflow to get started."
+            state.filter
+                ? "Try a different search term."
+                : state.selectedCategoryId
+                    ? "No workflows are assigned to this category yet."
+                    : "Create your first workflow to get started."
         ));
         return;
     }
@@ -482,17 +958,28 @@ function renderWorkflowList() {
     workflowList.innerHTML = filtered.map(workflow => {
         const statuses = workflow.statuses ?? [];
         const actionCount = statuses.reduce((count, status) => count + (status.actions ?? []).length, 0);
+        const category = getCategoryById(workflow.categoryId);
 
         return `
             <article class="workflow-card ${workflow.id === state.selectedWorkflowId ? "selected" : ""}" data-workflow-id="${escapeHtml(workflow.id)}">
                 <div class="workflow-card-header">
                     <div>
                         <h3 class="workflow-card-title">${escapeHtml(workflow.name)}</h3>
-                        <p class="workflow-meta">${escapeHtml(workflow.id)}</p>
+                        <p class="workflow-meta">${escapeHtml(workflow.id)}${category ? ` / ${escapeHtml(category.name)}` : ""}</p>
                     </div>
-                    <span class="pill">v${escapeHtml(String(workflow.version ?? 0))}</span>
+                    <div class="workflow-card-actions">
+                        <span class="pill">v${escapeHtml(String(workflow.version ?? 0))}</span>
+                        <button
+                            class="danger-button workflow-delete-button"
+                            type="button"
+                            data-delete-workflow-id="${escapeHtml(workflow.id)}"
+                            aria-label="Delete workflow ${escapeHtml(workflow.id)}">
+                            Delete
+                        </button>
+                    </div>
                 </div>
                 <div class="status-badges">
+                    ${category ? `<span class="pill">${escapeHtml(category.name)}</span>` : ""}
                     <span class="pill">${statuses.length} statuses</span>
                     <span class="pill">${actionCount} actions</span>
                 </div>
@@ -501,9 +988,19 @@ function renderWorkflowList() {
     }).join("");
 
     for (const card of workflowList.querySelectorAll("[data-workflow-id]")) {
-        card.addEventListener("click", () => {
-            const workflow = state.workflows.find(item => item.id === card.dataset.workflowId);
-            selectWorkflow(workflow ?? null);
+        card.addEventListener("click", async () => {
+            if (!card.dataset.workflowId) {
+                return;
+            }
+
+            await openWorkflow(card.dataset.workflowId);
+        });
+    }
+
+    for (const button of workflowList.querySelectorAll("[data-delete-workflow-id]")) {
+        button.addEventListener("click", async event => {
+            event.stopPropagation();
+            await deleteWorkflowById(button.dataset.deleteWorkflowId);
         });
     }
 }
@@ -847,7 +1344,7 @@ function handleInspectorFieldInput(field, statusCode, actionCode, conditionIndex
             return;
         case "action-mode":
             updateAction(statusCode, actionCode, action => {
-                action.mode = target.value;
+                action.mode = normalizeActionModeValue(target.value);
             }, { fullRender: true });
             return;
         case "condition-key":
@@ -1117,6 +1614,7 @@ function serializeDraft() {
     const workflow = {
         id: state.draft.id.trim(),
         version: selectedWorkflow?.id === state.draft.id ? selectedWorkflow.version ?? 0 : 0,
+        categoryId: state.draft.categoryId,
         name: state.draft.name.trim(),
         description: state.draft.description?.trim() ?? "",
         initialStatus: state.draft.initialStatus,
@@ -1130,7 +1628,7 @@ function serializeDraft() {
                 name: action.name.trim(),
                 description: action.description?.trim() ?? "",
                 targetStatus: action.targetStatus,
-                mode: action.mode,
+                mode: normalizeActionModeValue(action.mode),
                 conditions: action.conditions.map(condition => ({
                     key: condition.key.trim(),
                     operator: condition.operator,
@@ -1145,6 +1643,7 @@ function serializeDraft() {
 
 function syncDraftFromVisibleEditors() {
     state.draft.id = workflowIdInput.value.trim();
+    state.draft.categoryId = workflowCategoryInput.value || state.draft.categoryId;
     state.draft.name = workflowNameInput.value.trim();
     state.draft.description = workflowDescriptionInput.value;
     state.draft.initialStatus = workflowInitialStatusInput.value || state.draft.initialStatus;
@@ -1204,7 +1703,7 @@ function applyVisibleFieldValue(fieldElement) {
             return;
         case "action-mode":
             writeActionValue(statusCode, actionCode, action => {
-                action.mode = fieldElement.value;
+                action.mode = normalizeActionModeValue(fieldElement.value);
             });
             return;
         case "condition-key":
@@ -1230,6 +1729,14 @@ function applyVisibleFieldValue(fieldElement) {
 function validateWorkflow(workflow) {
     if (!workflow.id) {
         throw new Error("Workflow ID is required.");
+    }
+
+    if (!workflow.categoryId) {
+        throw new Error("Workflow category is required.");
+    }
+
+    if (!state.categories.some(category => category.id === workflow.categoryId)) {
+        throw new Error(`Workflow category '${workflow.categoryId}' does not exist.`);
     }
 
     if (!workflow.name) {
@@ -1299,6 +1806,7 @@ function findPersistenceMismatches(expectedWorkflow, persistedWorkflow) {
     }
 
     if (expected.id !== actual.id) mismatches.push("id");
+    if (expected.categoryId !== actual.categoryId) mismatches.push("categoryId");
     if (expected.name !== actual.name) mismatches.push("name");
     if (expected.description !== actual.description) mismatches.push("description");
     if (expected.initialStatus !== actual.initialStatus) mismatches.push("initialStatus");
@@ -1349,6 +1857,7 @@ function comparableWorkflow(workflow) {
     const normalized = normalizeWorkflow(workflow);
     return {
         id: normalized.id ?? "",
+        categoryId: normalized.categoryId || "general",
         name: normalized.name ?? "",
         description: normalized.description ?? "",
         initialStatus: normalized.initialStatus ?? "",
@@ -1377,6 +1886,7 @@ function normalizeWorkflow(workflow) {
     const normalized = {
         id: workflow.id ?? "",
         version: workflow.version ?? 0,
+        categoryId: workflow.categoryId || state.categories[0]?.id || "general",
         name: workflow.name ?? "",
         description: workflow.description ?? "",
         initialStatus: workflow.initialStatus ?? workflow.statuses?.[0]?.code ?? "",
@@ -1384,13 +1894,13 @@ function normalizeWorkflow(workflow) {
             code: status.code ?? "",
             name: status.name ?? status.code ?? "",
             description: status.description ?? "",
-            isTerminal: !!status.isTerminal,
+            isTerminal: readTerminalFlag(status),
             actions: (status.actions ?? []).map(action => ({
                 code: action.code ?? "",
                 name: action.name ?? action.code ?? "",
                 description: action.description ?? "",
                 targetStatus: action.targetStatus ?? "",
-                mode: action.mode ?? "Manual",
+                mode: normalizeActionModeValue(readActionMode(action)),
                 conditions: (action.conditions ?? []).map(condition => ({
                     key: condition.key ?? "",
                     operator: condition.operator ?? "Equals",
@@ -1517,6 +2027,7 @@ function emptyWorkflow() {
     return {
         id: "",
         version: 0,
+        categoryId: state.categories[0]?.id ?? "general",
         name: "",
         description: "",
         initialStatus: "Draft",
@@ -1529,6 +2040,15 @@ function emptyWorkflow() {
                 actions: []
             }
         ]
+    };
+}
+
+function emptyCategory() {
+    return {
+        id: "",
+        name: "",
+        description: "",
+        originalCategoryId: null
     };
 }
 
@@ -1551,6 +2071,49 @@ function ensureInitialStatus() {
 
 function getSelectedWorkflow() {
     return state.workflows.find(workflow => workflow.id === state.selectedWorkflowId) ?? null;
+}
+
+function getSelectedCategory() {
+    return state.categories.find(category => category.id === state.selectedCategoryId) ?? null;
+}
+
+function getCategoryById(categoryId) {
+    return state.categories.find(category => category.id === categoryId) ?? null;
+}
+
+function countWorkflowsForCategory(categoryId) {
+    return state.workflows.filter(workflow => workflow.categoryId === categoryId).length;
+}
+
+function getLatestVersionInfo() {
+    return state.versionHistory.find(version => version.isLatest) ?? state.versionHistory[0] ?? null;
+}
+
+function getSelectedVersionInfo() {
+    return state.versionHistory.find(version => version.version === state.selectedWorkflowVersion) ?? getLatestVersionInfo();
+}
+
+function isDraftReadOnly() {
+    const versionInfo = getSelectedVersionInfo();
+    if (!state.selectedWorkflowId || !versionInfo) {
+        return false;
+    }
+
+    if (state.isEditingDetachedVersion) {
+        return false;
+    }
+
+    return !versionInfo.isLatest || versionInfo.instanceCount > 0;
+}
+
+function canRollbackSelectedVersion() {
+    const selectedVersion = getSelectedVersionInfo();
+    if (!selectedVersion || selectedVersion.isLatest) {
+        return false;
+    }
+
+    return !state.versionHistory.some(version =>
+        version.version > selectedVersion.version && version.instanceCount > 0);
 }
 
 function getStatus(statusCode) {
@@ -1664,6 +2227,19 @@ function uniqueStatusCode() {
     return candidate;
 }
 
+function uniqueCategoryId() {
+    const existing = new Set(state.categories.map(category => category.id));
+    let index = state.categories.length + 1;
+    let candidate = "category";
+
+    while (existing.has(candidate)) {
+        index += 1;
+        candidate = `category_${index}`;
+    }
+
+    return candidate;
+}
+
 function uniqueActionCode(status, targetStatus) {
     const base = `TO_${slugifyIdentifier(targetStatus || "status")}`;
     const existing = new Set(status.actions.map(action => action.code));
@@ -1697,26 +2273,115 @@ function titleFromCode(value) {
 }
 
 async function fetchJson(url, options) {
-    const response = await fetch(url, options);
+    const requestOptions = {
+        cache: "no-store",
+        ...options,
+        headers: {
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+            ...(options?.headers ?? {})
+        }
+    };
+
+    const response = await fetch(url, requestOptions);
+    const responseText = await response.text();
     if (!response.ok) {
-        throw new Error(`${url} returned ${response.status}`);
+        let detail = "";
+
+        try {
+            const errorPayload = responseText ? JSON.parse(responseText) : null;
+            detail = errorPayload?.error ?? errorPayload?.message ?? "";
+        } catch {
+            detail = responseText.trim();
+        }
+
+        throw new Error(detail
+            ? `${url} returned ${response.status}: ${detail}`
+            : `${url} returned ${response.status}`);
     }
 
-    return response.status === 204 ? null : response.json();
+    if (response.status === 204 || !responseText) {
+        return null;
+    }
+
+    return JSON.parse(responseText);
 }
 
 function setBusy(isBusy) {
+    state.isBusy = isBusy;
     refreshButton.disabled = isBusy;
     newWorkflowButton.disabled = isBusy;
-    addStatusButton.disabled = isBusy;
-    connectButton.disabled = isBusy;
-    autoLayoutButton.disabled = isBusy;
-    deleteButton.disabled = isBusy || !getSelectedWorkflow();
+    applyEditorLockState();
+    renderCategoryList();
+    renderVersionHistory();
+}
+
+function applyEditorLockState() {
+    const lockEditing = state.isBusy || isDraftReadOnly() || state.categories.length === 0;
+    const excludedIds = new Set([
+        "workflow-version-select",
+        "view-latest-button",
+        "edit-version-button",
+        "rollback-version-button",
+        "delete-button",
+        "reset-button"
+    ]);
+
+    for (const element of workflowForm.querySelectorAll("input, textarea, select, button")) {
+        if (excludedIds.has(element.id)) {
+            continue;
+        }
+
+        if (element.tagName === "BUTTON" || element.tagName === "SELECT" || element.type === "checkbox" || element.type === "radio") {
+            element.disabled = lockEditing;
+            continue;
+        }
+
+        element.readOnly = lockEditing;
+    }
+
+    deleteButton.disabled = state.isBusy || !getSelectedWorkflow();
+    resetButton.disabled = state.isBusy;
+    addStatusButton.disabled = lockEditing;
+    connectButton.disabled = lockEditing;
+    autoLayoutButton.disabled = lockEditing;
 }
 
 function setMessage(message, isError = false) {
     formMessage.textContent = message;
     formMessage.className = `message-banner${message ? isError ? " error" : " success" : ""}`;
+}
+
+function readTerminalFlag(status) {
+    if (typeof status?.isTerminal === "boolean") {
+        return status.isTerminal;
+    }
+
+    const actions = Array.isArray(status?.actions) ? status.actions : [];
+    return actions.length === 0;
+}
+
+function readActionMode(action) {
+    if (typeof action?.mode === "string" && action.mode) {
+        return action.mode;
+    }
+
+    return action?.isStraightThroughProcessing ? "Automatic" : "Manual";
+}
+
+function normalizeActionModeValue(value) {
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === "automatic") {
+            return "Automatic";
+        }
+
+        if (normalized === "manual") {
+            return "Manual";
+        }
+    }
+
+    return value === true ? "Automatic" : "Manual";
 }
 
 function createEmptyState(title, copy) {

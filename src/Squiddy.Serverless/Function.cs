@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Amazon.Lambda.APIGatewayEvents;
@@ -63,6 +64,7 @@ public class Function
         var workflowRepository = new SqliteWorkflowDefinitionRepository(connection);
         var workflowInstanceRepository = new SqliteWorkflowInstanceRepository(connection);
         var workflowAuditRepository = new SqliteWorkflowAuditRepository(connection);
+        var workflowCategoryRepository = new SqliteWorkflowCategoryRepository(connection);
 
         var segments = route.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
@@ -76,8 +78,15 @@ public class Function
                 endpoints = new[]
                 {
                     "GET /workflows",
+                    "GET /workflow-categories",
+                    "GET /diagnostics/storage",
                     "GET /workflows/{workflowId}",
+                    "GET /workflows/{workflowId}/versions",
+                    "GET /workflows/{workflowId}/versions/{version}",
                     "POST /workflows",
+                    "POST /workflow-categories",
+                    "POST /workflows/{workflowId}/rollback",
+                    "DELETE /workflow-categories/{categoryId}",
                     "DELETE /workflows/{workflowId}",
                     "POST /workflows/evaluate",
                     "GET /workflow-instances",
@@ -94,14 +103,49 @@ public class Function
             return Ok(await workflowRepository.ListAsync());
         }
 
+        if (method == "GET" && route == "/workflow-categories")
+        {
+            return Ok(await workflowCategoryRepository.ListAsync());
+        }
+
+        if (method == "GET" && route == "/diagnostics/storage")
+        {
+            return await GetStorageDiagnosticsAsync(connection);
+        }
+
         if (method == "POST" && route == "/workflows")
         {
-            return await SaveWorkflowAsync(request, workflowRepository);
+            return await SaveWorkflowAsync(request, workflowRepository, workflowCategoryRepository);
+        }
+
+        if (method == "POST" && route == "/workflow-categories")
+        {
+            return await SaveWorkflowCategoryAsync(request, connection, workflowCategoryRepository);
+        }
+
+        if (method == "GET" && segments.Length == 3 && segments[0] == "workflows" && segments[2] == "versions")
+        {
+            return await ListWorkflowVersionsAsync(segments[1], workflowRepository);
+        }
+
+        if (method == "GET" && segments.Length == 4 && segments[0] == "workflows" && segments[2] == "versions")
+        {
+            return await GetWorkflowVersionAsync(segments[1], segments[3], workflowRepository);
+        }
+
+        if (method == "POST" && segments.Length == 3 && segments[0] == "workflows" && segments[2] == "rollback")
+        {
+            return await RollbackWorkflowAsync(request, connection, segments[1], workflowRepository, workflowInstanceRepository);
         }
 
         if (method == "DELETE" && segments.Length == 2 && segments[0] == "workflows")
         {
             return await DeleteWorkflowAsync(connection, segments[1], workflowRepository, workflowInstanceRepository, workflowAuditRepository);
+        }
+
+        if (method == "DELETE" && segments.Length == 2 && segments[0] == "workflow-categories")
+        {
+            return await DeleteWorkflowCategoryAsync(connection, segments[1], workflowCategoryRepository);
         }
 
         if (method == "POST" && route == "/workflows/evaluate")
@@ -150,7 +194,8 @@ public class Function
 
     private async Task<APIGatewayHttpApiV2ProxyResponse> SaveWorkflowAsync(
         APIGatewayHttpApiV2ProxyRequest request,
-        SqliteWorkflowDefinitionRepository workflowRepository)
+        SqliteWorkflowDefinitionRepository workflowRepository,
+        SqliteWorkflowCategoryRepository workflowCategoryRepository)
     {
         var payload = DeserializeBody<SaveWorkflowDefinitionRequest>(request.Body);
         if (payload.Workflow is null)
@@ -158,11 +203,70 @@ public class Function
             throw new InvalidOperationException("Workflow is required.");
         }
 
+        BreakIntoDebuggerOnWorkflowSave(payload.Workflow);
+
         var workflow = NormalizeWorkflow(payload.Workflow);
+        if (await workflowCategoryRepository.GetAsync(workflow.CategoryId) is null)
+        {
+            throw new InvalidOperationException($"Workflow.CategoryId '{workflow.CategoryId}' does not exist.");
+        }
+
         ValidateWorkflow(workflow);
         var savedWorkflow = await workflowRepository.SaveAsync(workflow, payload.ExpectedVersion);
 
         return Response(payload.ExpectedVersion is null ? HttpStatusCode.Created : HttpStatusCode.OK, savedWorkflow);
+    }
+
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> SaveWorkflowCategoryAsync(
+        APIGatewayHttpApiV2ProxyRequest request,
+        SqliteConnection connection,
+        SqliteWorkflowCategoryRepository workflowCategoryRepository)
+    {
+        var payload = DeserializeBody<SaveWorkflowCategoryRequest>(request.Body);
+        if (payload.Category is null)
+        {
+            throw new InvalidOperationException("Category is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(payload.Category.Id))
+        {
+            throw new InvalidOperationException("Category.Id is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(payload.Category.Name))
+        {
+            throw new InvalidOperationException("Category.Name is required.");
+        }
+
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        var savedCategory = await workflowCategoryRepository.SaveAsync(payload.Category, payload.OriginalCategoryId, transaction);
+        await transaction.CommitAsync();
+        return Ok(savedCategory);
+    }
+
+    private static void BreakIntoDebuggerOnWorkflowSave(WorkflowDefinition workflow)
+    {
+        var enabled = Environment.GetEnvironmentVariable("SQUIDDY_DEBUG_SAVE_BREAK");
+        if (!string.Equals(enabled, "1", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(enabled, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var workflowIdFilter = Environment.GetEnvironmentVariable("SQUIDDY_DEBUG_SAVE_WORKFLOW_ID");
+        if (!string.IsNullOrWhiteSpace(workflowIdFilter) &&
+            !string.Equals(workflowIdFilter, workflow.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (Debugger.IsAttached)
+        {
+            Debugger.Break();
+            return;
+        }
+
+        Debugger.Launch();
     }
 
     private async Task<APIGatewayHttpApiV2ProxyResponse> GetWorkflowAsync(
@@ -172,6 +276,83 @@ public class Function
         var workflow = await workflowRepository.GetAsync(workflowId);
         return workflow is null
             ? Error(HttpStatusCode.NotFound, $"Workflow '{workflowId}' was not found.")
+            : Ok(workflow);
+    }
+
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> GetStorageDiagnosticsAsync(SqliteConnection connection)
+    {
+        static async Task<string[]> ReadColumnsAsync(SqliteConnection openConnection, string tableName)
+        {
+            await using var command = openConnection.CreateCommand();
+            command.CommandText = $"PRAGMA table_info({tableName});";
+
+            var columns = new List<string>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(1));
+            }
+
+            return columns.ToArray();
+        }
+
+        static async Task<int> ReadCountAsync(SqliteConnection openConnection, string tableName)
+        {
+            await using var command = openConnection.CreateCommand();
+            command.CommandText = $"SELECT COUNT(*) FROM {tableName};";
+            return Convert.ToInt32(await command.ExecuteScalarAsync());
+        }
+
+        // This endpoint exists to answer "which SQLite file and schema is the app really using?"
+        // when the debug host, browser, and repo-local database file drift apart.
+        return Ok(new
+        {
+            databasePath = DatabaseOptions.DatabasePath,
+            currentDirectory = Directory.GetCurrentDirectory(),
+            workflowDefinitions = new
+            {
+                columns = await ReadColumnsAsync(connection, "workflow_definitions"),
+                rowCount = await ReadCountAsync(connection, "workflow_definitions")
+            },
+            workflowCategories = new
+            {
+                columns = await ReadColumnsAsync(connection, "workflow_categories"),
+                rowCount = await ReadCountAsync(connection, "workflow_categories")
+            },
+            workflowInstances = new
+            {
+                columns = await ReadColumnsAsync(connection, "workflow_instances"),
+                rowCount = await ReadCountAsync(connection, "workflow_instances")
+            }
+        });
+    }
+
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> ListWorkflowVersionsAsync(
+        string workflowId,
+        SqliteWorkflowDefinitionRepository workflowRepository)
+    {
+        var workflow = await workflowRepository.GetAsync(workflowId);
+        if (workflow is null)
+        {
+            return Error(HttpStatusCode.NotFound, $"Workflow '{workflowId}' was not found.");
+        }
+
+        return Ok(await workflowRepository.ListVersionsAsync(workflowId));
+    }
+
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> GetWorkflowVersionAsync(
+        string workflowId,
+        string versionSegment,
+        SqliteWorkflowDefinitionRepository workflowRepository)
+    {
+        if (!int.TryParse(versionSegment, out var version) || version <= 0)
+        {
+            return Error(HttpStatusCode.BadRequest, $"Workflow version '{versionSegment}' is invalid.");
+        }
+
+        var workflow = await workflowRepository.GetVersionAsync(workflowId, version);
+        return workflow is null
+            ? Error(HttpStatusCode.NotFound, $"Workflow '{workflowId}' version {version} was not found.")
             : Ok(workflow);
     }
 
@@ -228,6 +409,99 @@ public class Function
         };
     }
 
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> DeleteWorkflowCategoryAsync(
+        SqliteConnection connection,
+        string categoryId,
+        SqliteWorkflowCategoryRepository workflowCategoryRepository)
+    {
+        var existingCategory = await workflowCategoryRepository.GetAsync(categoryId);
+        if (existingCategory is null)
+        {
+            return Error(HttpStatusCode.NotFound, $"Workflow category '{categoryId}' was not found.");
+        }
+
+        if (string.Equals(categoryId, "general", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Workflow category 'general' cannot be deleted.");
+        }
+
+        var usageCount = await workflowCategoryRepository.CountWorkflowDefinitionsAsync(categoryId);
+        if (usageCount > 0)
+        {
+            throw new InvalidOperationException(
+                $"Workflow category '{categoryId}' cannot be deleted because {usageCount} workflow definition version(s) still reference it.");
+        }
+
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        await workflowCategoryRepository.DeleteAsync(categoryId, transaction);
+        await transaction.CommitAsync();
+
+        return new APIGatewayHttpApiV2ProxyResponse
+        {
+            StatusCode = (int)HttpStatusCode.NoContent,
+            Headers = new Dictionary<string, string>()
+        };
+    }
+
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> RollbackWorkflowAsync(
+        APIGatewayHttpApiV2ProxyRequest request,
+        SqliteConnection connection,
+        string workflowId,
+        SqliteWorkflowDefinitionRepository workflowRepository,
+        SqliteWorkflowInstanceRepository workflowInstanceRepository)
+    {
+        var payload = DeserializeBody<RollbackWorkflowVersionRequest>(request.Body);
+        if (payload.TargetVersion <= 0)
+        {
+            throw new InvalidOperationException("TargetVersion must be greater than zero.");
+        }
+
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+
+        var targetWorkflow = await workflowRepository.GetVersionAsync(workflowId, payload.TargetVersion, transaction);
+        if (targetWorkflow is null)
+        {
+            return Error(HttpStatusCode.NotFound, $"Workflow '{workflowId}' version {payload.TargetVersion} was not found.");
+        }
+
+        var latestVersion = await workflowRepository.GetLatestVersionNumberAsync(workflowId, transaction);
+        if (latestVersion is null)
+        {
+            return Error(HttpStatusCode.NotFound, $"Workflow '{workflowId}' was not found.");
+        }
+
+        if (payload.TargetVersion == latestVersion.Value)
+        {
+            await transaction.CommitAsync();
+            return Ok(new
+            {
+                workflow = targetWorkflow,
+                versions = await workflowRepository.ListVersionsAsync(workflowId, cancellationToken: default)
+            });
+        }
+
+        if (payload.TargetVersion > latestVersion.Value)
+        {
+            throw new InvalidOperationException(
+                $"Cannot roll back workflow '{workflowId}' to version {payload.TargetVersion} because the latest version is {latestVersion.Value}.");
+        }
+
+        if (await workflowInstanceRepository.AnyForWorkflowVersionsNewerThanAsync(workflowId, payload.TargetVersion, transaction))
+        {
+            throw new InvalidOperationException(
+                $"Cannot roll back workflow '{workflowId}' to version {payload.TargetVersion} because one or more newer versions are referenced by workflow instances.");
+        }
+
+        await workflowRepository.DeleteVersionsNewerThanAsync(workflowId, payload.TargetVersion, transaction);
+        await transaction.CommitAsync();
+
+        return Ok(new
+        {
+            workflow = targetWorkflow,
+            versions = await workflowRepository.ListVersionsAsync(workflowId)
+        });
+    }
+
     private async Task<APIGatewayHttpApiV2ProxyResponse> CreateWorkflowInstanceAsync(
         APIGatewayHttpApiV2ProxyRequest request,
         SqliteConnection connection,
@@ -257,6 +531,7 @@ public class Function
         var instance = new WorkflowInstance(
             instanceId,
             workflow.Id,
+            workflow.Version,
             0,
             result.FinalStatus,
             context,
@@ -301,10 +576,15 @@ public class Function
             return Error(HttpStatusCode.NotFound, $"Workflow instance '{instanceId}' was not found.");
         }
 
-        var workflow = await workflowRepository.GetAsync(existingInstance.WorkflowId, transaction);
+        var workflow = await workflowRepository.GetVersionAsync(
+            existingInstance.WorkflowId,
+            existingInstance.WorkflowVersion,
+            transaction);
         if (workflow is null)
         {
-            return Error(HttpStatusCode.NotFound, $"Workflow '{existingInstance.WorkflowId}' was not found.");
+            return Error(
+                HttpStatusCode.NotFound,
+                $"Workflow '{existingInstance.WorkflowId}' version {existingInstance.WorkflowVersion} was not found.");
         }
 
         var mergedContext = MergeContext(existingInstance.Context, payload.Context);
@@ -378,6 +658,7 @@ public class Function
             transactionId,
             instance.Id,
             instance.WorkflowId,
+            instance.WorkflowVersion,
             triggerSource,
             actorId,
             correlationId,
@@ -424,8 +705,9 @@ public class Function
     }
 
     private static WorkflowDefinition NormalizeWorkflow(WorkflowDefinition workflow) =>
-        workflow with
+        (workflow with
         {
+            CategoryId = string.IsNullOrWhiteSpace(workflow.CategoryId) ? "general" : workflow.CategoryId.Trim(),
             Statuses = (workflow.Statuses ?? Array.Empty<WorkflowStatus>())
                 .Select(status => status with
                 {
@@ -437,7 +719,14 @@ public class Function
                         .ToArray()
                 })
                 .ToArray()
-        };
+        }) is var normalized
+            ? normalized with
+            {
+                InitialStatus = string.IsNullOrWhiteSpace(normalized.InitialStatus)
+                    ? normalized.Statuses?.FirstOrDefault()?.Code ?? string.Empty
+                    : normalized.InitialStatus
+            }
+            : workflow;
 
     private static void ValidateWorkflow(WorkflowDefinition workflow)
     {
@@ -449,6 +738,11 @@ public class Function
         if (string.IsNullOrWhiteSpace(workflow.Name))
         {
             throw new InvalidOperationException("Workflow.Name is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(workflow.CategoryId))
+        {
+            throw new InvalidOperationException("Workflow.CategoryId is required.");
         }
 
         if (string.IsNullOrWhiteSpace(workflow.InitialStatus))

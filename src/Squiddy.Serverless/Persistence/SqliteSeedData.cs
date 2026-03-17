@@ -5,6 +5,7 @@ public static class SqliteSeedData
     public static WorkflowDefinition DefaultWorkflow => new(
         "underwriting",
         0,
+        "general",
         "Underwriting Workflow",
         "Sample underwriting process with automatic approval and manual review.",
         "Draft",

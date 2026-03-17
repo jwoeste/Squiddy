@@ -19,9 +19,13 @@ The current scaffold models:
 
 - `GET /` - service metadata
 - `GET /workflows` - lists workflow definitions from SQLite
+- `GET /workflow-categories` - lists workflow categories from SQLite
+- `GET /diagnostics/storage` - returns the active SQLite file path plus key schema diagnostics
 - `GET /workflows/{workflowId}` - returns one workflow definition from SQLite
 - `POST /workflows` - creates or updates a workflow definition with optimistic version checks
+- `POST /workflow-categories` - creates or updates a workflow category
 - `DELETE /workflows/{workflowId}` - deletes a workflow definition and related local activity
+- `DELETE /workflow-categories/{categoryId}` - deletes a workflow category when it is no longer referenced
 - `POST /workflows/evaluate` - evaluates a workflow definition in-memory
 - `GET /workflow-instances` - lists persisted workflow instances from SQLite
 - `POST /workflow-instances` - creates a new workflow instance from the workflow's initial status
@@ -162,9 +166,39 @@ dotnet run --project src/Squiddy.DebugHost --launch-profile Squiddy.DebugHost
 
 The `Squiddy.DebugHost` launch profile is the canonical local entry point. It sets the app URL to `http://localhost:5056`, opens Swagger automatically, and uses `data/squiddy.db` for the local SQLite store.
 
+Important local-storage note:
+
+- the Lambda handler resolves SQLite relative to the current working directory
+- when you run the debug host, that usually means the live database is under `src/Squiddy.DebugHost/data/squiddy.db`, not necessarily the repo-root `data/squiddy.db`
+- if the dashboard behaves differently than a DB file you are inspecting by hand, call `GET /diagnostics/storage` in the running app first to confirm the active database path and schema
+
 The Lambda project itself still targets `net8.0`, but the local debug host targets `net10.0` so it can run on machines that only have the current .NET 10 runtime installed.
 
 The debug host also serves a dashboard at `http://localhost:5056/dashboard` for browsing workflow definitions and recent instance activity.
+
+## Workflow Model Notes
+
+- workflow definitions are append-only by version; saving creates a new row rather than overwriting the previous version
+- the latest definition version is the default one returned by `GET /workflows`
+- workflow instances persist the definition version they executed against
+- audit transactions also persist the workflow definition version they were produced from
+- workflow definitions belong to a workflow category via `categoryId`
+- older workflow rows that predate categories are normalized onto the default `general` category during initialization
+
+## Troubleshooting
+
+When local behavior looks wrong, start with:
+
+```bash
+curl http://localhost:5056/diagnostics/storage
+```
+
+That response shows:
+
+- the exact SQLite file path the running app is using
+- whether `workflow_categories` exists
+- whether `workflow_definitions` includes `category_id`
+- the row counts for the key tables
 
 ## Deploy
 

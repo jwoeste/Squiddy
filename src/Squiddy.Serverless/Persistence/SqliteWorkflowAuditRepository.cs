@@ -24,6 +24,7 @@ public sealed class SqliteWorkflowAuditRepository
                 transaction_id,
                 instance_id,
                 workflow_id,
+                workflow_version,
                 trigger_source,
                 actor_id,
                 correlation_id,
@@ -36,6 +37,7 @@ public sealed class SqliteWorkflowAuditRepository
                 $transactionId,
                 $instanceId,
                 $workflowId,
+                $workflowVersion,
                 $triggerSource,
                 $actorId,
                 $correlationId,
@@ -48,6 +50,7 @@ public sealed class SqliteWorkflowAuditRepository
         transactionCommand.Parameters.AddWithValue("$transactionId", transactionRecord.TransactionId);
         transactionCommand.Parameters.AddWithValue("$instanceId", transactionRecord.InstanceId);
         transactionCommand.Parameters.AddWithValue("$workflowId", transactionRecord.WorkflowId);
+        transactionCommand.Parameters.AddWithValue("$workflowVersion", transactionRecord.WorkflowVersion);
         transactionCommand.Parameters.AddWithValue("$triggerSource", transactionRecord.TriggerSource);
         transactionCommand.Parameters.AddWithValue("$actorId", (object?)transactionRecord.ActorId ?? DBNull.Value);
         transactionCommand.Parameters.AddWithValue("$correlationId", (object?)transactionRecord.CorrelationId ?? DBNull.Value);
@@ -106,6 +109,7 @@ public sealed class SqliteWorkflowAuditRepository
                 transaction_id,
                 instance_id,
                 workflow_id,
+                workflow_version,
                 trigger_source,
                 actor_id,
                 correlation_id,
@@ -129,14 +133,15 @@ public sealed class SqliteWorkflowAuditRepository
                 transactionId,
                 reader.GetString(1),
                 reader.GetString(2),
-                reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetInt32(3),
+                reader.GetString(4),
                 reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetString(6),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
                 reader.GetString(7),
-                SqliteJson.Deserialize<Dictionary<string, string?>>(reader.GetString(8)),
-                SqliteJson.Deserialize<WorkflowEvaluationResult>(reader.GetString(9)),
-                DateTimeOffset.Parse(reader.GetString(10)),
+                reader.GetString(8),
+                SqliteJson.Deserialize<Dictionary<string, string?>>(reader.GetString(9)),
+                SqliteJson.Deserialize<WorkflowEvaluationResult>(reader.GetString(10)),
+                DateTimeOffset.Parse(reader.GetString(11)),
                 Array.Empty<WorkflowAuditEntry>()));
         }
 

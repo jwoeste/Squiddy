@@ -3,6 +3,7 @@ namespace Squiddy.Serverless;
 public sealed record WorkflowDefinition(
     string Id,
     int Version,
+    string CategoryId,
     string Name,
     string? Description,
     string InitialStatus,
