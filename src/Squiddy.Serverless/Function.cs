@@ -3,7 +3,6 @@ using System.Net;
 using System.Text.Json;
 using Amazon.Lambda.APIGatewayEvents;
 using Amazon.Lambda.Core;
-using Microsoft.Data.Sqlite;
 using Squiddy.Serverless.Contracts;
 using Squiddy.Serverless.Persistence;
 
@@ -16,8 +15,10 @@ public class Function
     private static readonly JsonSerializerOptions JsonOptions = SqliteJson.SerializerOptions;
     private static readonly SqliteOptions DatabaseOptions = new();
     private static readonly SqliteConnectionFactory ConnectionFactory = new(DatabaseOptions);
+    private static readonly IWorkflowStorageBackendFactory StorageBackendFactory =
+        new SqliteWorkflowStorageBackendFactory(ConnectionFactory, DatabaseOptions);
     private static readonly SqliteDatabaseInitializer DatabaseInitializer = new(ConnectionFactory);
-    private static readonly Task InitializationTask = DatabaseInitializer.InitializeAsync(SqliteSeedData.DefaultWorkflow);
+    private static readonly Task InitializationTask = DatabaseInitializer.InitializeAsync(SqliteSeedData.SeedWorkflows);
 
     private readonly WorkflowEngine _workflowEngine = new();
 
@@ -58,13 +59,14 @@ public class Function
         APIGatewayHttpApiV2ProxyRequest request,
         ILambdaContext context)
     {
-        await using var connection = ConnectionFactory.CreateConnection();
-        await connection.OpenAsync();
+        await using var backend = await StorageBackendFactory.CreateAsync();
 
-        var workflowRepository = new SqliteWorkflowDefinitionRepository(connection);
-        var workflowInstanceRepository = new SqliteWorkflowInstanceRepository(connection);
-        var workflowAuditRepository = new SqliteWorkflowAuditRepository(connection);
-        var workflowCategoryRepository = new SqliteWorkflowCategoryRepository(connection);
+        var workflowRepository = backend.WorkflowDefinitions;
+        var workflowInstanceRepository = backend.WorkflowInstances;
+        var workflowAuditRepository = backend.WorkflowAudits;
+        var workflowCategoryRepository = backend.WorkflowCategories;
+        var tradeTicketRepository = backend.TradeTickets;
+        var tradeTicketAuditRepository = backend.TradeTicketAudits;
 
         var segments = route.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
@@ -93,7 +95,11 @@ public class Function
                     "POST /workflow-instances",
                     "POST /workflow-instances/{instanceId}/commands",
                     "GET /workflow-instances/{instanceId}",
-                    "GET /workflow-instances/{instanceId}/audit-trail"
+                    "GET /workflow-instances/{instanceId}/audit-trail",
+                    "GET /trades",
+                    "GET /trades/{ticketId}",
+                    "POST /trades",
+                    "GET /trades/{ticketId}/audit-trail"
                 }
             });
         }
@@ -110,7 +116,7 @@ public class Function
 
         if (method == "GET" && route == "/diagnostics/storage")
         {
-            return await GetStorageDiagnosticsAsync(connection);
+            return await GetStorageDiagnosticsAsync(backend);
         }
 
         if (method == "POST" && route == "/workflows")
@@ -120,7 +126,7 @@ public class Function
 
         if (method == "POST" && route == "/workflow-categories")
         {
-            return await SaveWorkflowCategoryAsync(request, connection, workflowCategoryRepository);
+            return await SaveWorkflowCategoryAsync(request, backend, workflowCategoryRepository);
         }
 
         if (method == "GET" && segments.Length == 3 && segments[0] == "workflows" && segments[2] == "versions")
@@ -135,17 +141,17 @@ public class Function
 
         if (method == "POST" && segments.Length == 3 && segments[0] == "workflows" && segments[2] == "rollback")
         {
-            return await RollbackWorkflowAsync(request, connection, segments[1], workflowRepository, workflowInstanceRepository);
+            return await RollbackWorkflowAsync(request, backend, segments[1], workflowRepository, workflowInstanceRepository);
         }
 
         if (method == "DELETE" && segments.Length == 2 && segments[0] == "workflows")
         {
-            return await DeleteWorkflowAsync(connection, segments[1], workflowRepository, workflowInstanceRepository, workflowAuditRepository);
+            return await DeleteWorkflowAsync(backend, segments[1], workflowRepository, workflowInstanceRepository, workflowAuditRepository);
         }
 
         if (method == "DELETE" && segments.Length == 2 && segments[0] == "workflow-categories")
         {
-            return await DeleteWorkflowCategoryAsync(connection, segments[1], workflowCategoryRepository);
+            return await DeleteWorkflowCategoryAsync(backend, segments[1], workflowCategoryRepository);
         }
 
         if (method == "POST" && route == "/workflows/evaluate")
@@ -155,14 +161,24 @@ public class Function
 
         if (method == "POST" && route == "/workflow-instances")
         {
-            return await CreateWorkflowInstanceAsync(request, connection, workflowRepository, workflowInstanceRepository, workflowAuditRepository);
+            return await CreateWorkflowInstanceAsync(request, backend, workflowRepository, workflowInstanceRepository, workflowAuditRepository);
+        }
+
+        if (method == "GET" && route == "/trades")
+        {
+            return Ok(await tradeTicketRepository.ListAsync());
+        }
+
+        if (method == "POST" && route == "/trades")
+        {
+            return await SaveTradeTicketAsync(request, backend, tradeTicketRepository, tradeTicketAuditRepository);
         }
 
         if (method == "POST" && segments.Length == 3 && segments[0] == "workflow-instances" && segments[2] == "commands")
         {
             return await ExecuteWorkflowInstanceCommandAsync(
                 request,
-                connection,
+                backend,
                 segments[1],
                 workflowRepository,
                 workflowInstanceRepository,
@@ -184,9 +200,19 @@ public class Function
             return await GetWorkflowInstanceAsync(segments[1], workflowInstanceRepository);
         }
 
+        if (method == "GET" && segments.Length == 2 && segments[0] == "trades")
+        {
+            return await GetTradeTicketAsync(segments[1], tradeTicketRepository);
+        }
+
         if (method == "GET" && segments.Length == 3 && segments[0] == "workflow-instances" && segments[2] == "audit-trail")
         {
             return Ok(await workflowAuditRepository.ListByInstanceAsync(segments[1]));
+        }
+
+        if (method == "GET" && segments.Length == 3 && segments[0] == "trades" && segments[2] == "audit-trail")
+        {
+            return Ok(await tradeTicketAuditRepository.ListByTicketIdAsync(segments[1]));
         }
 
         return Error(HttpStatusCode.NotFound, "Route not found.");
@@ -194,8 +220,8 @@ public class Function
 
     private async Task<APIGatewayHttpApiV2ProxyResponse> SaveWorkflowAsync(
         APIGatewayHttpApiV2ProxyRequest request,
-        SqliteWorkflowDefinitionRepository workflowRepository,
-        SqliteWorkflowCategoryRepository workflowCategoryRepository)
+        IWorkflowDefinitionRepository workflowRepository,
+        IWorkflowCategoryRepository workflowCategoryRepository)
     {
         var payload = DeserializeBody<SaveWorkflowDefinitionRequest>(request.Body);
         if (payload.Workflow is null)
@@ -219,8 +245,8 @@ public class Function
 
     private static async Task<APIGatewayHttpApiV2ProxyResponse> SaveWorkflowCategoryAsync(
         APIGatewayHttpApiV2ProxyRequest request,
-        SqliteConnection connection,
-        SqliteWorkflowCategoryRepository workflowCategoryRepository)
+        IWorkflowStorageBackend backend,
+        IWorkflowCategoryRepository workflowCategoryRepository)
     {
         var payload = DeserializeBody<SaveWorkflowCategoryRequest>(request.Body);
         if (payload.Category is null)
@@ -238,7 +264,7 @@ public class Function
             throw new InvalidOperationException("Category.Name is required.");
         }
 
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        await using var transaction = await backend.BeginTransactionAsync();
         var savedCategory = await workflowCategoryRepository.SaveAsync(payload.Category, payload.OriginalCategoryId, transaction);
         await transaction.CommitAsync();
         return Ok(savedCategory);
@@ -271,7 +297,7 @@ public class Function
 
     private async Task<APIGatewayHttpApiV2ProxyResponse> GetWorkflowAsync(
         string workflowId,
-        SqliteWorkflowDefinitionRepository workflowRepository)
+        IWorkflowDefinitionRepository workflowRepository)
     {
         var workflow = await workflowRepository.GetAsync(workflowId);
         return workflow is null
@@ -279,57 +305,12 @@ public class Function
             : Ok(workflow);
     }
 
-    private static async Task<APIGatewayHttpApiV2ProxyResponse> GetStorageDiagnosticsAsync(SqliteConnection connection)
-    {
-        static async Task<string[]> ReadColumnsAsync(SqliteConnection openConnection, string tableName)
-        {
-            await using var command = openConnection.CreateCommand();
-            command.CommandText = $"PRAGMA table_info({tableName});";
-
-            var columns = new List<string>();
-            await using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                columns.Add(reader.GetString(1));
-            }
-
-            return columns.ToArray();
-        }
-
-        static async Task<int> ReadCountAsync(SqliteConnection openConnection, string tableName)
-        {
-            await using var command = openConnection.CreateCommand();
-            command.CommandText = $"SELECT COUNT(*) FROM {tableName};";
-            return Convert.ToInt32(await command.ExecuteScalarAsync());
-        }
-
-        // This endpoint exists to answer "which SQLite file and schema is the app really using?"
-        // when the debug host, browser, and repo-local database file drift apart.
-        return Ok(new
-        {
-            databasePath = DatabaseOptions.DatabasePath,
-            currentDirectory = Directory.GetCurrentDirectory(),
-            workflowDefinitions = new
-            {
-                columns = await ReadColumnsAsync(connection, "workflow_definitions"),
-                rowCount = await ReadCountAsync(connection, "workflow_definitions")
-            },
-            workflowCategories = new
-            {
-                columns = await ReadColumnsAsync(connection, "workflow_categories"),
-                rowCount = await ReadCountAsync(connection, "workflow_categories")
-            },
-            workflowInstances = new
-            {
-                columns = await ReadColumnsAsync(connection, "workflow_instances"),
-                rowCount = await ReadCountAsync(connection, "workflow_instances")
-            }
-        });
-    }
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> GetStorageDiagnosticsAsync(IWorkflowStorageBackend backend) =>
+        Ok(await backend.GetDiagnosticsAsync());
 
     private static async Task<APIGatewayHttpApiV2ProxyResponse> ListWorkflowVersionsAsync(
         string workflowId,
-        SqliteWorkflowDefinitionRepository workflowRepository)
+        IWorkflowDefinitionRepository workflowRepository)
     {
         var workflow = await workflowRepository.GetAsync(workflowId);
         if (workflow is null)
@@ -343,7 +324,7 @@ public class Function
     private static async Task<APIGatewayHttpApiV2ProxyResponse> GetWorkflowVersionAsync(
         string workflowId,
         string versionSegment,
-        SqliteWorkflowDefinitionRepository workflowRepository)
+        IWorkflowDefinitionRepository workflowRepository)
     {
         if (!int.TryParse(versionSegment, out var version) || version <= 0)
         {
@@ -384,11 +365,11 @@ public class Function
     }
 
     private static async Task<APIGatewayHttpApiV2ProxyResponse> DeleteWorkflowAsync(
-        SqliteConnection connection,
+        IWorkflowStorageBackend backend,
         string workflowId,
-        SqliteWorkflowDefinitionRepository workflowRepository,
-        SqliteWorkflowInstanceRepository workflowInstanceRepository,
-        SqliteWorkflowAuditRepository workflowAuditRepository)
+        IWorkflowDefinitionRepository workflowRepository,
+        IWorkflowInstanceRepository workflowInstanceRepository,
+        IWorkflowAuditRepository workflowAuditRepository)
     {
         var existingWorkflow = await workflowRepository.GetAsync(workflowId);
         if (existingWorkflow is null)
@@ -396,7 +377,7 @@ public class Function
             return Error(HttpStatusCode.NotFound, $"Workflow '{workflowId}' was not found.");
         }
 
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        await using var transaction = await backend.BeginTransactionAsync();
         await workflowAuditRepository.DeleteByWorkflowIdAsync(workflowId, transaction);
         await workflowInstanceRepository.DeleteByWorkflowIdAsync(workflowId, transaction);
         await workflowRepository.DeleteAsync(workflowId, transaction);
@@ -410,9 +391,9 @@ public class Function
     }
 
     private static async Task<APIGatewayHttpApiV2ProxyResponse> DeleteWorkflowCategoryAsync(
-        SqliteConnection connection,
+        IWorkflowStorageBackend backend,
         string categoryId,
-        SqliteWorkflowCategoryRepository workflowCategoryRepository)
+        IWorkflowCategoryRepository workflowCategoryRepository)
     {
         var existingCategory = await workflowCategoryRepository.GetAsync(categoryId);
         if (existingCategory is null)
@@ -432,7 +413,7 @@ public class Function
                 $"Workflow category '{categoryId}' cannot be deleted because {usageCount} workflow definition version(s) still reference it.");
         }
 
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        await using var transaction = await backend.BeginTransactionAsync();
         await workflowCategoryRepository.DeleteAsync(categoryId, transaction);
         await transaction.CommitAsync();
 
@@ -445,10 +426,10 @@ public class Function
 
     private static async Task<APIGatewayHttpApiV2ProxyResponse> RollbackWorkflowAsync(
         APIGatewayHttpApiV2ProxyRequest request,
-        SqliteConnection connection,
+        IWorkflowStorageBackend backend,
         string workflowId,
-        SqliteWorkflowDefinitionRepository workflowRepository,
-        SqliteWorkflowInstanceRepository workflowInstanceRepository)
+        IWorkflowDefinitionRepository workflowRepository,
+        IWorkflowInstanceRepository workflowInstanceRepository)
     {
         var payload = DeserializeBody<RollbackWorkflowVersionRequest>(request.Body);
         if (payload.TargetVersion <= 0)
@@ -456,7 +437,7 @@ public class Function
             throw new InvalidOperationException("TargetVersion must be greater than zero.");
         }
 
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        await using var transaction = await backend.BeginTransactionAsync();
 
         var targetWorkflow = await workflowRepository.GetVersionAsync(workflowId, payload.TargetVersion, transaction);
         if (targetWorkflow is null)
@@ -504,10 +485,10 @@ public class Function
 
     private async Task<APIGatewayHttpApiV2ProxyResponse> CreateWorkflowInstanceAsync(
         APIGatewayHttpApiV2ProxyRequest request,
-        SqliteConnection connection,
-        SqliteWorkflowDefinitionRepository workflowRepository,
-        SqliteWorkflowInstanceRepository workflowInstanceRepository,
-        SqliteWorkflowAuditRepository workflowAuditRepository)
+        IWorkflowStorageBackend backend,
+        IWorkflowDefinitionRepository workflowRepository,
+        IWorkflowInstanceRepository workflowInstanceRepository,
+        IWorkflowAuditRepository workflowAuditRepository)
     {
         var payload = DeserializeBody<CreateWorkflowInstanceRequest>(request.Body);
 
@@ -516,7 +497,7 @@ public class Function
             throw new InvalidOperationException("WorkflowId is required.");
         }
 
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        await using var transaction = await backend.BeginTransactionAsync();
 
         var workflow = await workflowRepository.GetAsync(payload.WorkflowId, transaction);
         if (workflow is null)
@@ -560,15 +541,15 @@ public class Function
 
     private async Task<APIGatewayHttpApiV2ProxyResponse> ExecuteWorkflowInstanceCommandAsync(
         APIGatewayHttpApiV2ProxyRequest request,
-        SqliteConnection connection,
+        IWorkflowStorageBackend backend,
         string instanceId,
-        SqliteWorkflowDefinitionRepository workflowRepository,
-        SqliteWorkflowInstanceRepository workflowInstanceRepository,
-        SqliteWorkflowAuditRepository workflowAuditRepository)
+        IWorkflowDefinitionRepository workflowRepository,
+        IWorkflowInstanceRepository workflowInstanceRepository,
+        IWorkflowAuditRepository workflowAuditRepository)
     {
         var payload = DeserializeBody<ExecuteWorkflowInstanceCommandRequest>(request.Body);
 
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        await using var transaction = await backend.BeginTransactionAsync();
 
         var existingInstance = await workflowInstanceRepository.GetAsync(instanceId, transaction);
         if (existingInstance is null)
@@ -625,12 +606,60 @@ public class Function
 
     private static async Task<APIGatewayHttpApiV2ProxyResponse> GetWorkflowInstanceAsync(
         string instanceId,
-        SqliteWorkflowInstanceRepository workflowInstanceRepository)
+        IWorkflowInstanceRepository workflowInstanceRepository)
     {
         var instance = await workflowInstanceRepository.GetAsync(instanceId);
         return instance is null
             ? Error(HttpStatusCode.NotFound, $"Workflow instance '{instanceId}' was not found.")
             : Ok(instance);
+    }
+
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> GetTradeTicketAsync(
+        string ticketId,
+        ITradeTicketRepository tradeTicketRepository)
+    {
+        var trade = await tradeTicketRepository.GetAsync(ticketId);
+        return trade is null
+            ? Error(HttpStatusCode.NotFound, $"Trade ticket '{ticketId}' was not found.")
+            : Ok(trade);
+    }
+
+    private static async Task<APIGatewayHttpApiV2ProxyResponse> SaveTradeTicketAsync(
+        APIGatewayHttpApiV2ProxyRequest request,
+        IWorkflowStorageBackend backend,
+        ITradeTicketRepository tradeTicketRepository,
+        ITradeTicketAuditRepository tradeTicketAuditRepository)
+    {
+        var payload = DeserializeBody<SaveTradeTicketRequest>(request.Body);
+        if (payload.Trade is null)
+        {
+            throw new InvalidOperationException("Trade is required.");
+        }
+
+        var normalizedTrade = NormalizeTrade(payload.Trade);
+        await using var transaction = await backend.BeginTransactionAsync();
+        var existingTrade = await tradeTicketRepository.GetAsync(normalizedTrade.TicketId, transaction);
+        var savedTrade = await tradeTicketRepository.SaveAsync(
+            normalizedTrade,
+            payload.ExpectedVersion,
+            transaction);
+
+        var auditRecord = BuildTradeAuditRecord(
+            savedTrade,
+            payload.ActionCode,
+            payload.Description,
+            payload.TriggerSource,
+            payload.ActorId,
+            payload.CorrelationId,
+            payload.Metadata);
+        await tradeTicketAuditRepository.AppendAsync(auditRecord, transaction);
+        await transaction.CommitAsync();
+
+        return Response(existingTrade is null ? HttpStatusCode.Created : HttpStatusCode.OK, new
+        {
+            trade = savedTrade,
+            audit = auditRecord
+        });
     }
 
     private static WorkflowAuditTransaction BuildAuditTransaction(
@@ -668,6 +697,32 @@ public class Function
             result,
             createdAt,
             entries);
+    }
+
+    private static TradeTicketAuditRecord BuildTradeAuditRecord(
+        TradeTicket trade,
+        string actionCode,
+        string? description,
+        string? triggerSource,
+        string? actorId,
+        string? correlationId,
+        IReadOnlyDictionary<string, string?>? metadata)
+    {
+        var createdAt = DateTimeOffset.UtcNow.ToString("O");
+        return new TradeTicketAuditRecord(
+            Guid.NewGuid().ToString("N"),
+            trade.TicketId,
+            trade.Version,
+            string.IsNullOrWhiteSpace(actionCode) ? "TRADE_SAVED" : actionCode.Trim(),
+            string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+            string.IsNullOrWhiteSpace(triggerSource) ? "trade-ticket-api" : triggerSource.Trim(),
+            string.IsNullOrWhiteSpace(actorId) ? null : actorId.Trim(),
+            string.IsNullOrWhiteSpace(correlationId) ? null : correlationId.Trim(),
+            metadata is null
+                ? new Dictionary<string, string?>()
+                : new Dictionary<string, string?>(metadata),
+            createdAt,
+            trade);
     }
 
     private static IReadOnlyDictionary<string, string?> MergeContext(
@@ -727,6 +782,69 @@ public class Function
                     : normalized.InitialStatus
             }
             : workflow;
+
+    private static TradeTicket NormalizeTrade(TradeTicket trade)
+    {
+        if (string.IsNullOrWhiteSpace(trade.TicketId))
+        {
+            throw new InvalidOperationException("Trade.TicketId is required.");
+        }
+
+        var now = DateTimeOffset.UtcNow.ToString("O");
+        return trade with
+        {
+            TicketId = trade.TicketId.Trim(),
+            Status = string.IsNullOrWhiteSpace(trade.Status) ? "Captured" : trade.Status.Trim(),
+            TradeType = string.IsNullOrWhiteSpace(trade.TradeType) ? "Cash" : trade.TradeType.Trim(),
+            AssetClass = string.IsNullOrWhiteSpace(trade.AssetClass) ? "Equity" : trade.AssetClass.Trim(),
+            ProductType = string.IsNullOrWhiteSpace(trade.ProductType) ? string.Empty : trade.ProductType.Trim(),
+            Instrument = string.IsNullOrWhiteSpace(trade.Instrument) ? string.Empty : trade.Instrument.Trim(),
+            Side = string.Equals(trade.Side, "Sell", StringComparison.OrdinalIgnoreCase) ? "Sell" : "Buy",
+            Currency = string.IsNullOrWhiteSpace(trade.Currency) ? "USD" : trade.Currency.Trim().ToUpperInvariant(),
+            TradeDate = string.IsNullOrWhiteSpace(trade.TradeDate) ? string.Empty : trade.TradeDate.Trim(),
+            SettleDate = string.IsNullOrWhiteSpace(trade.SettleDate) ? string.Empty : trade.SettleDate.Trim(),
+            Book = string.IsNullOrWhiteSpace(trade.Book) ? string.Empty : trade.Book.Trim(),
+            Strategy = string.IsNullOrWhiteSpace(trade.Strategy) ? string.Empty : trade.Strategy.Trim(),
+            Trader = string.IsNullOrWhiteSpace(trade.Trader) ? string.Empty : trade.Trader.Trim(),
+            Counterparty = string.IsNullOrWhiteSpace(trade.Counterparty) ? string.Empty : trade.Counterparty.Trim(),
+            Venue = string.IsNullOrWhiteSpace(trade.Venue) ? string.Empty : trade.Venue.Trim(),
+            Broker = string.IsNullOrWhiteSpace(trade.Broker) ? string.Empty : trade.Broker.Trim(),
+            SettlementInstruction = string.IsNullOrWhiteSpace(trade.SettlementInstruction) ? string.Empty : trade.SettlementInstruction.Trim(),
+            Notes = string.IsNullOrWhiteSpace(trade.Notes) ? string.Empty : trade.Notes,
+            SettlementLocation = string.IsNullOrWhiteSpace(trade.SettlementLocation) ? string.Empty : trade.SettlementLocation.Trim(),
+            CashAccount = string.IsNullOrWhiteSpace(trade.CashAccount) ? string.Empty : trade.CashAccount.Trim(),
+            SettlementComments = string.IsNullOrWhiteSpace(trade.SettlementComments) ? string.Empty : trade.SettlementComments,
+            ExceptionState = string.IsNullOrWhiteSpace(trade.ExceptionState) ? null : trade.ExceptionState.Trim(),
+            WorkflowId = string.IsNullOrWhiteSpace(trade.WorkflowId) ? "trade-ticket" : trade.WorkflowId.Trim(),
+            WorkflowInstanceId = string.IsNullOrWhiteSpace(trade.WorkflowInstanceId) ? null : trade.WorkflowInstanceId.Trim(),
+            Checks = (trade.Checks ?? Array.Empty<TradeTicketCheck>())
+                .Select(check => check with
+                {
+                    Id = string.IsNullOrWhiteSpace(check.Id) ? Guid.NewGuid().ToString("N") : check.Id.Trim(),
+                    Label = string.IsNullOrWhiteSpace(check.Label) ? "Unnamed check" : check.Label.Trim(),
+                    Description = string.IsNullOrWhiteSpace(check.Description) ? string.Empty : check.Description.Trim()
+                })
+                .ToArray(),
+            Allocations = (trade.Allocations ?? Array.Empty<TradeTicketAllocation>())
+                .Select(allocation => allocation with
+                {
+                    Id = string.IsNullOrWhiteSpace(allocation.Id) ? Guid.NewGuid().ToString("N") : allocation.Id.Trim(),
+                    Account = string.IsNullOrWhiteSpace(allocation.Account) ? string.Empty : allocation.Account.Trim(),
+                    Book = string.IsNullOrWhiteSpace(allocation.Book) ? string.Empty : allocation.Book.Trim()
+                })
+                .ToArray(),
+            Activity = (trade.Activity ?? Array.Empty<TradeTicketActivity>())
+                .Select(activity => activity with
+                {
+                    Message = string.IsNullOrWhiteSpace(activity.Message) ? string.Empty : activity.Message,
+                    Actor = string.IsNullOrWhiteSpace(activity.Actor) ? "system" : activity.Actor.Trim(),
+                    Timestamp = string.IsNullOrWhiteSpace(activity.Timestamp) ? now : activity.Timestamp.Trim()
+                })
+                .ToArray(),
+            CreatedAt = string.IsNullOrWhiteSpace(trade.CreatedAt) ? now : trade.CreatedAt.Trim(),
+            UpdatedAt = now
+        };
+    }
 
     private static void ValidateWorkflow(WorkflowDefinition workflow)
     {

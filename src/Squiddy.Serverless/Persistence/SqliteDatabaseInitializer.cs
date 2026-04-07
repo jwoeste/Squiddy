@@ -11,7 +11,7 @@ public sealed class SqliteDatabaseInitializer
         _connectionFactory = connectionFactory;
     }
 
-    public async Task InitializeAsync(WorkflowDefinition seedWorkflow, CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(IEnumerable<WorkflowDefinition> seedWorkflows, CancellationToken cancellationToken = default)
     {
         await using var connection = _connectionFactory.CreateConnection();
         await connection.OpenAsync(cancellationToken);
@@ -39,10 +39,16 @@ public sealed class SqliteDatabaseInitializer
 
         var repository = new SqliteWorkflowDefinitionRepository(connection);
         await repository.CanonicalizeAllAsync(cancellationToken);
-        if (await repository.GetAsync(seedWorkflow.Id, cancellationToken: cancellationToken) is null)
+
+        foreach (var seedWorkflow in seedWorkflows)
         {
-            await repository.SaveAsync(seedWorkflow, expectedVersion: null, cancellationToken: cancellationToken);
+            if (await repository.GetAsync(seedWorkflow.Id, cancellationToken: cancellationToken) is null)
+            {
+                await repository.SaveAsync(seedWorkflow, expectedVersion: null, cancellationToken: cancellationToken);
+            }
         }
+
+        await SeedTradeTicketsAsync(connection, cancellationToken);
     }
 
     private static readonly string[] SchemaStatements =
@@ -111,6 +117,47 @@ public sealed class SqliteDatabaseInitializer
             applied_automatically INTEGER NOT NULL,
             created_at TEXT NOT NULL,
             FOREIGN KEY (transaction_id) REFERENCES workflow_audit_transactions (transaction_id)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS trade_tickets (
+            ticket_id TEXT PRIMARY KEY,
+            version INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL,
+            trade_type TEXT NOT NULL,
+            asset_class TEXT NOT NULL,
+            product_type TEXT NOT NULL,
+            instrument TEXT NOT NULL,
+            side TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            price REAL NOT NULL,
+            currency TEXT NOT NULL,
+            book TEXT NOT NULL,
+            trader TEXT NOT NULL,
+            counterparty TEXT NOT NULL,
+            workflow_id TEXT NOT NULL,
+            workflow_instance_id TEXT NULL,
+            workflow_version INTEGER NOT NULL DEFAULT 1,
+            workflow_instance_version INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS trade_ticket_audit (
+            audit_id TEXT PRIMARY KEY,
+            ticket_id TEXT NOT NULL,
+            trade_version INTEGER NOT NULL,
+            action_code TEXT NOT NULL,
+            description TEXT NULL,
+            trigger_source TEXT NULL,
+            actor_id TEXT NULL,
+            correlation_id TEXT NULL,
+            metadata_json TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (ticket_id) REFERENCES trade_tickets (ticket_id)
         );
         """
     };
@@ -348,6 +395,44 @@ public sealed class SqliteDatabaseInitializer
                OR workflow_version <= 0;
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task SeedTradeTicketsAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var tradeRepository = new SqliteTradeTicketRepository(connection);
+        var auditRepository = new SqliteTradeTicketAuditRepository(connection);
+
+        await using var countCommand = connection.CreateCommand();
+        countCommand.CommandText = "SELECT COUNT(*) FROM trade_tickets;";
+        var existingCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
+        if (existingCount > 0)
+        {
+            return;
+        }
+
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var seedTrade in SqliteSeedData.SeedTradeTickets)
+        {
+            var savedTrade = await tradeRepository.SaveAsync(seedTrade, expectedVersion: null, new SqliteWorkflowStorageTransaction(transaction), cancellationToken);
+            var auditRecord = new TradeTicketAuditRecord(
+                Guid.NewGuid().ToString("N"),
+                savedTrade.TicketId,
+                savedTrade.Version,
+                "TRADE_SEEDED",
+                "Seeded demo trade inserted into the local database.",
+                "database-initializer",
+                "system",
+                savedTrade.TicketId,
+                new Dictionary<string, string?>
+                {
+                    ["seeded"] = "true"
+                },
+                savedTrade.CreatedAt,
+                savedTrade);
+            await auditRepository.AppendAsync(auditRecord, new SqliteWorkflowStorageTransaction(transaction), cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static async Task<bool> TableExistsAsync(SqliteConnection connection, string tableName, CancellationToken cancellationToken)

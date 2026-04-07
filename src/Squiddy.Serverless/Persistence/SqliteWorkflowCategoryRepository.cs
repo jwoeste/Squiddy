@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Squiddy.Serverless.Persistence;
 
-public sealed class SqliteWorkflowCategoryRepository
+public sealed class SqliteWorkflowCategoryRepository : IWorkflowCategoryRepository
 {
     private readonly SqliteConnection _connection;
 
@@ -34,11 +34,11 @@ public sealed class SqliteWorkflowCategoryRepository
 
     public async Task<WorkflowCategory?> GetAsync(
         string categoryId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             SELECT category_id, name, description, created_at, updated_at
@@ -60,9 +60,10 @@ public sealed class SqliteWorkflowCategoryRepository
     public async Task<WorkflowCategory> SaveAsync(
         WorkflowCategory category,
         string? originalCategoryId = null,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
+        var sqliteTransaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         var normalized = category with
         {
             Id = category.Id.Trim(),
@@ -100,7 +101,7 @@ public sealed class SqliteWorkflowCategoryRepository
         };
 
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = sqliteTransaction;
         command.CommandText =
             """
             UPDATE workflow_categories
@@ -122,7 +123,7 @@ public sealed class SqliteWorkflowCategoryRepository
         {
             var definitions = new List<(string WorkflowId, int Version, string DefinitionJson)>();
             await using var readDefinitionsCommand = _connection.CreateCommand();
-            readDefinitionsCommand.Transaction = transaction;
+            readDefinitionsCommand.Transaction = sqliteTransaction;
             readDefinitionsCommand.CommandText =
                 """
                 SELECT workflow_id, version, definition_json
@@ -140,7 +141,7 @@ public sealed class SqliteWorkflowCategoryRepository
             }
 
             await using var workflowCommand = _connection.CreateCommand();
-            workflowCommand.Transaction = transaction;
+            workflowCommand.Transaction = sqliteTransaction;
             workflowCommand.CommandText =
                 """
                 UPDATE workflow_definitions
@@ -159,7 +160,7 @@ public sealed class SqliteWorkflowCategoryRepository
                 };
 
                 await using var updateDefinitionCommand = _connection.CreateCommand();
-                updateDefinitionCommand.Transaction = transaction;
+                updateDefinitionCommand.Transaction = sqliteTransaction;
                 updateDefinitionCommand.CommandText =
                     """
                     UPDATE workflow_definitions
@@ -179,11 +180,11 @@ public sealed class SqliteWorkflowCategoryRepository
 
     public async Task DeleteAsync(
         string categoryId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             DELETE FROM workflow_categories
@@ -195,11 +196,11 @@ public sealed class SqliteWorkflowCategoryRepository
 
     public async Task<int> CountWorkflowDefinitionsAsync(
         string categoryId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             SELECT COUNT(*)
@@ -212,11 +213,11 @@ public sealed class SqliteWorkflowCategoryRepository
 
     private async Task InsertAsync(
         WorkflowCategory category,
-        SqliteTransaction? transaction,
+        IWorkflowStorageTransaction? transaction,
         CancellationToken cancellationToken)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             INSERT INTO workflow_categories (category_id, name, description, created_at, updated_at)

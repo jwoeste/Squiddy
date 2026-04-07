@@ -172,6 +172,35 @@ app.MapGet("/workflow-instances/{instanceId}", async Task<IResult> (string insta
     .Produces(StatusCodes.Status200OK, contentType: "application/json")
     .Produces(StatusCodes.Status404NotFound);
 
+app.MapGet("/trades", async Task<IResult> () =>
+        await InvokeLambdaAsync("GET", "/trades"))
+    .WithName("ListTrades")
+    .WithSummary("Lists persisted trade tickets from SQLite.")
+    .Produces(StatusCodes.Status200OK, contentType: "application/json");
+
+app.MapGet("/trades/{ticketId}", async Task<IResult> (string ticketId) =>
+        await InvokeLambdaNotFoundAsync("GET", $"/trades/{ticketId}", $"Trade ticket '{ticketId}' was not found."))
+    .WithName("GetTrade")
+    .WithSummary("Returns a persisted trade ticket from SQLite.")
+    .Produces(StatusCodes.Status200OK, contentType: "application/json")
+    .Produces(StatusCodes.Status404NotFound);
+
+app.MapPost("/trades", async Task<IResult> (HttpRequest request) =>
+        await InvokeLambdaWithRawBodyAsync("POST", "/trades", request))
+    .WithName("SaveTrade")
+    .WithSummary("Creates or updates a persisted trade ticket and appends an audit record.")
+    .WithOpenApi()
+    .Produces(StatusCodes.Status201Created, contentType: "application/json")
+    .Produces(StatusCodes.Status200OK, contentType: "application/json")
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status409Conflict);
+
+app.MapGet("/trades/{ticketId}/audit-trail", async Task<IResult> (string ticketId) =>
+        await InvokeLambdaAsync("GET", $"/trades/{ticketId}/audit-trail"))
+    .WithName("GetTradeAuditTrail")
+    .WithSummary("Returns the append-only audit trail for a trade ticket.")
+    .Produces(StatusCodes.Status200OK, contentType: "application/json");
+
 // Force the Lambda initializer to run before the dashboard starts issuing requests.
 await InvokeFunctionAsync("GET", "/");
 

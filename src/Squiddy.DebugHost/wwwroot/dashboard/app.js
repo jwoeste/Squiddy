@@ -6,6 +6,7 @@ const LAYOUT_STORAGE_KEY = "squiddy.workflow.layout.v1";
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.8;
 const ZOOM_STEP = 0.1;
+const DEFAULT_CATEGORY_ID = "general";
 
 const state = {
     categories: [],
@@ -42,6 +43,7 @@ const workflowInitialStatusInput = document.getElementById("workflow-initial-sta
 const previewSummary = document.getElementById("preview-summary");
 const workflowJsonPreview = document.getElementById("workflow-json-preview");
 const categoryList = document.getElementById("category-list");
+const uiBuildPill = document.getElementById("ui-build-pill");
 const workflowVersionSelect = document.getElementById("workflow-version-select");
 const workflowVersionSummary = document.getElementById("workflow-version-summary");
 const refreshButton = document.getElementById("refresh-button");
@@ -74,6 +76,7 @@ const canvasNodes = document.getElementById("workflow-canvas-nodes");
 canvasSvg.setAttribute("viewBox", `0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`);
 canvasContent.style.width = `${CANVAS_WIDTH}px`;
 canvasContent.style.height = `${CANVAS_HEIGHT}px`;
+uiBuildPill.textContent = "UI 2026-03-17.1";
 
 workflowSearch.addEventListener("input", () => {
     state.filter = workflowSearch.value.trim().toLowerCase();
@@ -352,18 +355,8 @@ async function loadWorkflows() {
     setMessage("");
 
     try {
-        state.categories = await fetchJson("/workflow-categories");
-        if (state.selectedCategoryId && !state.categories.some(category => category.id === state.selectedCategoryId)) {
-            state.selectedCategoryId = null;
-        }
-
-        state.workflows = await fetchJson("/workflows");
-        if (state.selectedWorkflowId && !state.workflows.some(workflow => workflow.id === state.selectedWorkflowId)) {
-            state.selectedWorkflowId = null;
-            state.selectedWorkflowVersion = null;
-            state.versionHistory = [];
-            state.isEditingDetachedVersion = false;
-        }
+        await loadCategories();
+        await loadWorkflowCatalog();
 
         renderCategoryList();
         renderWorkflowList();
@@ -557,18 +550,32 @@ async function saveCategory(category, originalCategoryId = null) {
             })
         });
 
+        const previousSelectedCategoryId = state.selectedCategoryId;
+
         if (originalCategoryId && state.draft.categoryId === originalCategoryId) {
             state.draft.categoryId = savedCategory.id;
         }
 
-        state.selectedCategoryId = savedCategory.id;
         state.categoryDraft = {
             id: savedCategory.id,
             name: savedCategory.name,
             description: savedCategory.description ?? "",
             originalCategoryId: savedCategory.id
         };
-        await loadWorkflows();
+        upsertCategory(savedCategory, originalCategoryId);
+        state.selectedCategoryId = originalCategoryId && previousSelectedCategoryId === originalCategoryId
+            ? savedCategory.id
+            : previousSelectedCategoryId;
+        renderCategoryList();
+        renderDraft();
+        renderWorkflowList();
+
+        try {
+            await loadCategories();
+        } catch (error) {
+            console.warn("Category list refresh failed after category save.", error);
+        }
+
         setMessage(`Category '${savedCategory.name}' saved.`);
     } catch (error) {
         setMessage(`Category save failed. ${error.message}`, true);
@@ -931,7 +938,7 @@ function renderSummary() {
 
 function renderWorkflowList() {
     const filtered = state.workflows.filter(workflow => {
-        if (state.selectedCategoryId && workflow.categoryId !== state.selectedCategoryId) {
+        if (state.selectedCategoryId && normalizeCategoryId(workflow.categoryId) !== state.selectedCategoryId) {
             return false;
         }
 
@@ -1054,11 +1061,12 @@ function renderCanvas() {
                     ${status.actions.length
                         ? status.actions.slice(0, 3).map(action => `
                             <button
-                                class="node-transition-badge ${isActionSelected(status.code, action.code) ? "selected" : ""}"
+                                class="node-transition-badge ${transitionModeClass(action.mode)} ${isActionSelected(status.code, action.code) ? "selected" : ""}"
                                 type="button"
                                 data-select-action="true"
                                 data-status-code="${escapeHtml(status.code)}"
                                 data-action-code="${escapeHtml(action.code)}">
+                                <span class="transition-chip ${transitionModeClass(action.mode)}">${escapeHtml(action.mode)}</span>
                                 ${escapeHtml(action.name || action.code)}
                             </button>
                         `).join("")
@@ -1091,7 +1099,7 @@ function renderEdge(edge) {
 
     return `
         <path
-            class="${selected ? "selected" : ""}"
+            class="${transitionModeClass(edge.action.mode)} ${selected ? "selected" : ""}"
             data-status-code="${escapeHtml(edge.statusCode)}"
             data-action-code="${escapeHtml(edge.action.code)}"
             d="M ${sourceX} ${sourceY} C ${controlX1} ${controlY1}, ${controlX2} ${controlY2}, ${targetX} ${targetY}">
@@ -1172,11 +1180,14 @@ function renderActionCard(status, action, isSelected) {
     `).join("");
 
     return `
-        <article class="action-card ${isSelected ? "selected" : ""}">
+        <article class="action-card ${transitionModeClass(action.mode)} ${isSelected ? "selected" : ""}">
             <div class="action-card-header">
                 <div>
                     <h3>${escapeHtml(action.name || action.code)}</h3>
-                    <p class="action-meta">${escapeHtml(action.code)} to ${escapeHtml(action.targetStatus)}</p>
+                    <p class="action-meta">
+                        <span class="transition-chip ${transitionModeClass(action.mode)}">${escapeHtml(action.mode)}</span>
+                        ${escapeHtml(action.code)} to ${escapeHtml(action.targetStatus)}
+                    </p>
                 </div>
                 <div class="toolbar">
                     <button class="ghost-button" type="button" data-action="select-action" data-status-code="${escapeHtml(status.code)}" data-action-code="${escapeHtml(action.code)}">Focus</button>
@@ -1886,7 +1897,7 @@ function normalizeWorkflow(workflow) {
     const normalized = {
         id: workflow.id ?? "",
         version: workflow.version ?? 0,
-        categoryId: workflow.categoryId || state.categories[0]?.id || "general",
+        categoryId: normalizeCategoryId(workflow.categoryId),
         name: workflow.name ?? "",
         description: workflow.description ?? "",
         initialStatus: workflow.initialStatus ?? workflow.statuses?.[0]?.code ?? "",
@@ -1919,6 +1930,20 @@ function normalizeWorkflow(workflow) {
     }
 
     return normalized;
+}
+
+function normalizeCategory(category) {
+    return {
+        id: normalizeCategoryId(category?.id),
+        name: category?.name?.trim?.() || titleFromCode(normalizeCategoryId(category?.id)),
+        description: category?.description ?? "",
+        createdAt: category?.createdAt ?? null,
+        updatedAt: category?.updatedAt ?? null
+    };
+}
+
+function normalizeCategoryId(categoryId) {
+    return String(categoryId ?? "").trim() || DEFAULT_CATEGORY_ID;
 }
 
 function writeStatusValue(statusCode, updater) {
@@ -2027,7 +2052,7 @@ function emptyWorkflow() {
     return {
         id: "",
         version: 0,
-        categoryId: state.categories[0]?.id ?? "general",
+        categoryId: DEFAULT_CATEGORY_ID,
         name: "",
         description: "",
         initialStatus: "Draft",
@@ -2078,11 +2103,51 @@ function getSelectedCategory() {
 }
 
 function getCategoryById(categoryId) {
-    return state.categories.find(category => category.id === categoryId) ?? null;
+    const normalizedCategoryId = normalizeCategoryId(categoryId);
+    return state.categories.find(category => category.id === normalizedCategoryId) ?? null;
 }
 
 function countWorkflowsForCategory(categoryId) {
-    return state.workflows.filter(workflow => workflow.categoryId === categoryId).length;
+    const normalizedCategoryId = normalizeCategoryId(categoryId);
+    return state.workflows.filter(workflow => normalizeCategoryId(workflow.categoryId) === normalizedCategoryId).length;
+}
+
+async function loadCategories() {
+    const categories = await fetchJson("/workflow-categories");
+    state.categories = (Array.isArray(categories) ? categories : []).map(normalizeCategory);
+
+    if (!state.categories.length) {
+        state.categories = [normalizeCategory({ id: DEFAULT_CATEGORY_ID, name: "General", description: "Default workflow category." })];
+    }
+
+    if (state.selectedCategoryId && !state.categories.some(category => category.id === state.selectedCategoryId)) {
+        state.selectedCategoryId = null;
+    }
+}
+
+async function loadWorkflowCatalog() {
+    const workflows = await fetchJson("/workflows");
+    state.workflows = (Array.isArray(workflows) ? workflows : []).map(normalizeWorkflow);
+
+    if (state.selectedWorkflowId && !state.workflows.some(workflow => workflow.id === state.selectedWorkflowId)) {
+        state.selectedWorkflowId = null;
+        state.selectedWorkflowVersion = null;
+        state.versionHistory = [];
+        state.isEditingDetachedVersion = false;
+    }
+}
+
+function upsertCategory(category, originalCategoryId = null) {
+    const normalizedCategory = normalizeCategory(category);
+    const previousCategoryId = originalCategoryId ? normalizeCategoryId(originalCategoryId) : null;
+
+    state.categories = state.categories.filter(existing => existing.id !== normalizedCategory.id && existing.id !== previousCategoryId);
+    state.categories.push(normalizedCategory);
+    state.categories.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+
+    if (previousCategoryId && state.selectedCategoryId === previousCategoryId) {
+        state.selectedCategoryId = normalizedCategory.id;
+    }
 }
 
 function getLatestVersionInfo() {
@@ -2382,6 +2447,12 @@ function normalizeActionModeValue(value) {
     }
 
     return value === true ? "Automatic" : "Manual";
+}
+
+function transitionModeClass(mode) {
+    return normalizeActionModeValue(mode) === "Automatic"
+        ? "transition-automatic"
+        : "transition-manual";
 }
 
 function createEmptyState(title, copy) {

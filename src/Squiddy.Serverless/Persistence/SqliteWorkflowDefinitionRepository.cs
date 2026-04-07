@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Squiddy.Serverless.Persistence;
 
-public sealed class SqliteWorkflowDefinitionRepository
+public sealed class SqliteWorkflowDefinitionRepository : IWorkflowDefinitionRepository
 {
     private readonly SqliteConnection _connection;
 
@@ -16,7 +16,7 @@ public sealed class SqliteWorkflowDefinitionRepository
     public async Task<WorkflowDefinition> SaveAsync(
         WorkflowDefinition workflow,
         int? expectedVersion,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
@@ -48,18 +48,18 @@ public sealed class SqliteWorkflowDefinitionRepository
 
     public async Task<WorkflowDefinition?> GetAsync(
         string workflowId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
         => await GetVersionAsync(workflowId, version: null, transaction, cancellationToken);
 
     public async Task<WorkflowDefinition?> GetVersionAsync(
         string workflowId,
         int? version,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText = version is null
             ? """
               SELECT version, category_id, definition_json
@@ -119,7 +119,7 @@ public sealed class SqliteWorkflowDefinitionRepository
 
     public async Task<IReadOnlyList<WorkflowVersionInfo>> ListVersionsAsync(
         string workflowId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         var latestVersion = await GetLatestVersionNumberAsync(workflowId, transaction, cancellationToken);
@@ -129,7 +129,7 @@ public sealed class SqliteWorkflowDefinitionRepository
         }
 
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             SELECT
@@ -213,11 +213,11 @@ public sealed class SqliteWorkflowDefinitionRepository
 
     public async Task<bool> DeleteAsync(
         string workflowId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             DELETE FROM workflow_definitions
@@ -231,11 +231,11 @@ public sealed class SqliteWorkflowDefinitionRepository
     public async Task DeleteVersionsNewerThanAsync(
         string workflowId,
         int targetVersion,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             DELETE FROM workflow_definitions
@@ -249,11 +249,11 @@ public sealed class SqliteWorkflowDefinitionRepository
 
     public async Task<int?> GetLatestVersionNumberAsync(
         string workflowId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             SELECT MAX(version)
@@ -269,11 +269,11 @@ public sealed class SqliteWorkflowDefinitionRepository
     private async Task InsertWorkflowVersionAsync(
         WorkflowDefinition workflow,
         DateTimeOffset now,
-        SqliteTransaction? transaction,
+        IWorkflowStorageTransaction? transaction,
         CancellationToken cancellationToken)
     {
         await using var insertCommand = _connection.CreateCommand();
-        insertCommand.Transaction = transaction;
+        insertCommand.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         insertCommand.CommandText =
             """
             INSERT INTO workflow_definitions (workflow_id, category_id, name, version, definition_json, created_at, updated_at)

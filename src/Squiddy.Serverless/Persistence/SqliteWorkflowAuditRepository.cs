@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Squiddy.Serverless.Persistence;
 
-public sealed class SqliteWorkflowAuditRepository
+public sealed class SqliteWorkflowAuditRepository : IWorkflowAuditRepository
 {
     private readonly SqliteConnection _connection;
 
@@ -13,11 +13,13 @@ public sealed class SqliteWorkflowAuditRepository
 
     public async Task AppendTransactionAsync(
         WorkflowAuditTransaction transactionRecord,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
+        var sqliteTransaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
+
         await using var transactionCommand = _connection.CreateCommand();
-        transactionCommand.Transaction = transaction;
+        transactionCommand.Transaction = sqliteTransaction;
         transactionCommand.CommandText =
             """
             INSERT INTO workflow_audit_transactions (
@@ -64,7 +66,7 @@ public sealed class SqliteWorkflowAuditRepository
         foreach (var entry in transactionRecord.Entries)
         {
             await using var entryCommand = _connection.CreateCommand();
-            entryCommand.Transaction = transaction;
+            entryCommand.Transaction = sqliteTransaction;
             entryCommand.CommandText =
                 """
                 INSERT INTO workflow_audit_entries (
@@ -224,11 +226,13 @@ public sealed class SqliteWorkflowAuditRepository
 
     public async Task DeleteByWorkflowIdAsync(
         string workflowId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
+        var sqliteTransaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
+
         await using var deleteEntriesCommand = _connection.CreateCommand();
-        deleteEntriesCommand.Transaction = transaction;
+        deleteEntriesCommand.Transaction = sqliteTransaction;
         deleteEntriesCommand.CommandText =
             """
             DELETE FROM workflow_audit_entries
@@ -242,7 +246,7 @@ public sealed class SqliteWorkflowAuditRepository
         await deleteEntriesCommand.ExecuteNonQueryAsync(cancellationToken);
 
         await using var deleteTransactionsCommand = _connection.CreateCommand();
-        deleteTransactionsCommand.Transaction = transaction;
+        deleteTransactionsCommand.Transaction = sqliteTransaction;
         deleteTransactionsCommand.CommandText =
             """
             DELETE FROM workflow_audit_transactions

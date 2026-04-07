@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Squiddy.Serverless.Persistence;
 
-public sealed class SqliteWorkflowInstanceRepository
+public sealed class SqliteWorkflowInstanceRepository : IWorkflowInstanceRepository
 {
     private readonly SqliteConnection _connection;
 
@@ -13,11 +13,11 @@ public sealed class SqliteWorkflowInstanceRepository
 
     public async Task<WorkflowInstance?> GetAsync(
         string instanceId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             SELECT instance_id, workflow_id, workflow_version, version, current_status, context_json, last_evaluation_json, created_at, updated_at
@@ -38,14 +38,16 @@ public sealed class SqliteWorkflowInstanceRepository
     public async Task<WorkflowInstance> SaveAsync(
         WorkflowInstance instance,
         int? expectedVersion,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
+        var sqliteTransaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
+
         if (expectedVersion is null)
         {
             var createdInstance = instance with { Version = 1 };
             await using var insertCommand = _connection.CreateCommand();
-            insertCommand.Transaction = transaction;
+            insertCommand.Transaction = sqliteTransaction;
             insertCommand.CommandText =
                 """
                 INSERT INTO workflow_instances (
@@ -76,7 +78,7 @@ public sealed class SqliteWorkflowInstanceRepository
 
         var updatedInstance = instance with { Version = expectedVersion.Value + 1 };
         await using var updateCommand = _connection.CreateCommand();
-        updateCommand.Transaction = transaction;
+        updateCommand.Transaction = sqliteTransaction;
         updateCommand.CommandText =
             """
             UPDATE workflow_instances
@@ -125,11 +127,11 @@ public sealed class SqliteWorkflowInstanceRepository
 
     public async Task DeleteByWorkflowIdAsync(
         string workflowId,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             DELETE FROM workflow_instances
@@ -142,11 +144,11 @@ public sealed class SqliteWorkflowInstanceRepository
     public async Task<bool> AnyForWorkflowVersionAsync(
         string workflowId,
         int workflowVersion,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             SELECT 1
@@ -164,11 +166,11 @@ public sealed class SqliteWorkflowInstanceRepository
     public async Task<bool> AnyForWorkflowVersionsNewerThanAsync(
         string workflowId,
         int workflowVersion,
-        SqliteTransaction? transaction = null,
+        IWorkflowStorageTransaction? transaction = null,
         CancellationToken cancellationToken = default)
     {
         await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
+        command.Transaction = SqliteWorkflowStorageTransaction.Unwrap(transaction);
         command.CommandText =
             """
             SELECT 1

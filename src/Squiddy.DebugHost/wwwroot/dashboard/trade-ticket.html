@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Squiddy Trade Ticket Console</title>
+    <link rel="stylesheet" href="/dashboard/styles.css">
+</head>
+<body>
+    <div class="shell trade-shell">
+        <header class="hero trade-hero">
+            <div class="hero-copy-block">
+                <div class="terminal-strip" aria-label="Trade ticket status">
+                    <span class="terminal-pill terminal-pill-orange">SQDY &lt;TRD&gt;</span>
+                    <span class="terminal-pill">Ticket Console</span>
+                    <span class="terminal-pill terminal-pill-cyan">Workflow Governed</span>
+                    <span class="terminal-pill terminal-pill-green">Draft Persisted</span>
+                    <span id="trade-ui-build-pill" class="terminal-pill">UI Build</span>
+                </div>
+                <p class="eyebrow">Trade Handling</p>
+                <h1>Generic Trade Ticket</h1>
+                <p class="hero-copy">
+                    Capture economics, route approvals, review breaks, and move a trade from intake through booking in one operator-focused console.
+                </p>
+            </div>
+            <div class="hero-actions">
+                <a class="ghost-button" href="/dashboard/position-view.html">Position View</a>
+                <a class="ghost-button" href="/dashboard/trade-blotter.html">Trade Blotter</a>
+                <a class="ghost-button" href="/dashboard/index.html">Workflow Studio</a>
+                <a class="ghost-button" href="/swagger" target="_blank" rel="noreferrer">Open Swagger</a>
+                <button id="trade-reset-button" class="ghost-button" type="button">Reset Draft</button>
+                <button id="trade-save-button" class="primary-button" type="button">Save Draft</button>
+            </div>
+        </header>
+
+        <main class="trade-layout">
+            <section class="panel trade-form-panel">
+                <div class="panel-heading panel-heading-split">
+                    <div>
+                        <p class="panel-kicker">Capture</p>
+                        <h2>Ticket details</h2>
+                    </div>
+                    <div class="toolbar">
+                        <span id="trade-status-pill" class="pill trade-status-pill">Captured</span>
+                        <span id="trade-health-pill" class="pill">Ready</span>
+                    </div>
+                </div>
+
+                <section class="form-card">
+                    <div class="field-grid">
+                        <label class="field">
+                            <span class="field-label">Ticket ID</span>
+                            <input id="ticket-id" class="text-input" type="text" placeholder="TRD-20260327-001">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Workflow status</span>
+                            <select id="ticket-status" class="text-input">
+                                <option>Captured</option>
+                                <option>Validated</option>
+                                <option>Pending Approval</option>
+                                <option>Approved</option>
+                                <option>Booked</option>
+                                <option>Rejected</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div class="field-grid trade-field-grid-3">
+                        <label class="field">
+                            <span class="field-label">Trade type</span>
+                            <select id="trade-type" class="text-input">
+                                <option>Cash</option>
+                                <option>Position</option>
+                                <option>Contract / OTC</option>
+                            </select>
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Asset class</span>
+                            <select id="asset-class" class="text-input">
+                                <option>Equity</option>
+                                <option>FX</option>
+                                <option>Rates</option>
+                                <option>Credit</option>
+                                <option>Commodity</option>
+                                <option>Fund</option>
+                            </select>
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Product</span>
+                            <input id="product-type" class="text-input" type="text" placeholder="Cash Equity">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Instrument</span>
+                            <input id="instrument" class="text-input" type="text" placeholder="AAPL.OQ">
+                        </label>
+                    </div>
+
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Economics</p>
+                            <h3>Trade economics</h3>
+                        </div>
+                    </div>
+
+                    <div class="trade-side-toggle" role="radiogroup" aria-label="Trade side">
+                        <button id="side-buy" class="toggle-button is-selected" type="button" data-side="Buy">Buy</button>
+                        <button id="side-sell" class="toggle-button" type="button" data-side="Sell">Sell</button>
+                    </div>
+
+                    <div class="field-grid trade-field-grid-4">
+                        <label class="field">
+                            <span class="field-label">Quantity</span>
+                            <input id="quantity" class="text-input" type="number" min="0" step="0.0001" placeholder="1000">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Price</span>
+                            <input id="price" class="text-input" type="number" min="0" step="0.0001" placeholder="192.44">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Currency</span>
+                            <input id="currency" class="text-input" type="text" maxlength="3" placeholder="USD">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Notional</span>
+                            <input id="notional" class="text-input" type="text" readonly>
+                        </label>
+                    </div>
+
+                    <div class="field-grid trade-field-grid-4">
+                        <label class="field">
+                            <span class="field-label">Trade date</span>
+                            <input id="trade-date" class="text-input" type="date">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Settle date</span>
+                            <input id="settle-date" class="text-input" type="date">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Book</span>
+                            <input id="book" class="text-input" type="text" placeholder="EQ-ARBITRAGE">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Strategy</span>
+                            <input id="strategy" class="text-input" type="text" placeholder="Index Rebalance">
+                        </label>
+                    </div>
+
+                    <div class="field-grid trade-field-grid-3">
+                        <label class="field">
+                            <span class="field-label">Trader</span>
+                            <input id="trader" class="text-input" type="text" placeholder="jwoeste">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Counterparty</span>
+                            <input id="counterparty" class="text-input" type="text" placeholder="Goldman Sachs">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Execution venue</span>
+                            <input id="venue" class="text-input" type="text" placeholder="NASDAQ">
+                        </label>
+                    </div>
+
+                    <div class="field-grid">
+                        <label class="field">
+                            <span class="field-label">Broker</span>
+                            <input id="broker" class="text-input" type="text" placeholder="GSCO">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Settlement instruction</span>
+                            <input id="settlement-instruction" class="text-input" type="text" placeholder="DTC-PRIMARY-USD">
+                        </label>
+                    </div>
+
+                    <label class="field">
+                        <span class="field-label">Trade rationale / notes</span>
+                        <textarea id="trade-notes" class="text-area" placeholder="Add desk rationale, booking notes, or operational context."></textarea>
+                    </label>
+                </section>
+            </section>
+
+            <section class="panel trade-ops-panel">
+                <div class="panel-heading panel-heading-split">
+                    <div>
+                        <p class="panel-kicker">Operations</p>
+                        <h2>Workflow and controls</h2>
+                    </div>
+                    <div class="toolbar">
+                        <button id="validate-button" class="ghost-button" type="button">Validate</button>
+                        <button id="approve-button" class="ghost-button" type="button">Approve</button>
+                        <button id="book-button" class="primary-button" type="button">Book Trade</button>
+                    </div>
+                </div>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Workflow</p>
+                            <h3>Transition control</h3>
+                        </div>
+                    </div>
+                    <div class="workflow-transition-banner">
+                        <div>
+                            <p class="field-label">Current stage</p>
+                            <strong id="workflow-current-stage" class="stat-value">Captured</strong>
+                        </div>
+                        <div>
+                            <p class="field-label">Available transitions</p>
+                            <p id="workflow-transition-count" class="helper-copy">0 available</p>
+                        </div>
+                    </div>
+                    <label class="field">
+                        <span class="field-label">Transition note</span>
+                        <textarea id="workflow-transition-note" class="text-area" placeholder="Add an approval note, exception rationale, or handoff context for the next workflow step."></textarea>
+                    </label>
+                    <div id="workflow-transition-list" class="workflow-transition-list"></div>
+                    <div id="workflow-transition-help" class="helper-copy"></div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Lifecycle</p>
+                            <h3>Ticket progression</h3>
+                        </div>
+                    </div>
+                    <div id="lifecycle-track" class="lifecycle-track"></div>
+                    <div class="trade-action-grid">
+                        <button id="escalate-button" class="danger-button" type="button">Escalate</button>
+                        <button id="reject-button" class="ghost-button" type="button">Reject</button>
+                        <button id="duplicate-button" class="ghost-button" type="button">Duplicate</button>
+                    </div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Checks</p>
+                            <h3>Risk and compliance</h3>
+                        </div>
+                    </div>
+                    <div id="checklist" class="checklist-grid"></div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Allocations</p>
+                            <h3>Allocation slices</h3>
+                        </div>
+                        <button id="add-allocation-button" class="ghost-button" type="button">Add Allocation</button>
+                    </div>
+                    <div id="allocation-list" class="allocation-list"></div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Settlement</p>
+                            <h3>Operational instructions</h3>
+                        </div>
+                    </div>
+                    <div class="field-grid">
+                        <label class="field">
+                            <span class="field-label">Settlement location</span>
+                            <input id="settlement-location" class="text-input" type="text" placeholder="DTC">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Cash account</span>
+                            <input id="cash-account" class="text-input" type="text" placeholder="USD-OPERATIONS-01">
+                        </label>
+                    </div>
+                    <label class="field">
+                        <span class="field-label">Settlement comments</span>
+                        <textarea id="settlement-comments" class="text-area" placeholder="Fails handling, custodian notes, or standing instruction overrides."></textarea>
+                    </label>
+                </section>
+            </section>
+
+            <section class="panel trade-summary-panel">
+                <div class="panel-heading">
+                    <p class="panel-kicker">Command Center</p>
+                    <h2>Summary and exceptions</h2>
+                </div>
+
+                <section class="stat-grid trade-stat-grid">
+                    <article class="stat-card">
+                        <p class="stat-label">Exposure</p>
+                        <strong id="summary-exposure" class="stat-value">USD 0.00</strong>
+                        <p class="helper-copy">Gross notional of the current draft.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Checks passed</p>
+                        <strong id="summary-checks" class="stat-value">0 / 0</strong>
+                        <p class="helper-copy">Risk, compliance, and operational readiness.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Allocations</p>
+                        <strong id="summary-allocations" class="stat-value">0</strong>
+                        <p class="helper-copy">Distribution slices captured on the ticket.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Workflow route</p>
+                        <strong id="summary-route" class="stat-value">Desk Intake</strong>
+                        <p class="helper-copy">Current handling lane for the trade ticket.</p>
+                    </article>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Exceptions</p>
+                            <h3>Open issues</h3>
+                        </div>
+                    </div>
+                    <div id="exception-list" class="exception-list"></div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">AI Assist</p>
+                            <h3>Governed suggestions</h3>
+                        </div>
+                    </div>
+                    <div id="copilot-list" class="copilot-list"></div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Activity</p>
+                            <h3>Ticket activity</h3>
+                        </div>
+                    </div>
+                    <div id="activity-list" class="activity-list"></div>
+                </section>
+
+                <section class="form-card json-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Payload</p>
+                            <h3>Ticket envelope</h3>
+                        </div>
+                    </div>
+                    <pre id="trade-json-preview" class="json-preview"></pre>
+                </section>
+            </section>
+        </main>
+    </div>
+
+    <template id="trade-empty-state-template">
+        <div class="empty-state">
+            <p class="empty-title"></p>
+            <p class="empty-copy"></p>
+        </div>
+    </template>
+
+    <div class="terminal-alert-dock" aria-live="polite">
+        <div id="trade-form-message" class="message-banner"></div>
+    </div>
+
+    <script src="/dashboard/trade-store.js?v=20260327c"></script>
+    <script src="/dashboard/trade-ticket.js?v=20260327c"></script>
+</body>
+</html>

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Squiddy Trade Blotter</title>
+    <link rel="stylesheet" href="/dashboard/styles.css">
+</head>
+<body>
+    <div class="shell trade-shell">
+        <header class="hero trade-hero">
+            <div class="hero-copy-block">
+                <div class="terminal-strip" aria-label="Trade blotter status">
+                    <span class="terminal-pill terminal-pill-orange">SQDY &lt;BLT&gt;</span>
+                    <span class="terminal-pill">Trade Blotter</span>
+                    <span class="terminal-pill terminal-pill-cyan">Local Book</span>
+                    <span class="terminal-pill terminal-pill-green">Ticket Access</span>
+                    <span id="blotter-ui-build-pill" class="terminal-pill">UI Build</span>
+                </div>
+                <p class="eyebrow">Trade Monitoring</p>
+                <h1>Existing Trades</h1>
+                <p class="hero-copy">
+                    Review the working trade book, filter by lane or status, and reopen any ticket directly into the handling console.
+                </p>
+            </div>
+            <div class="hero-actions">
+                <a class="ghost-button" href="/dashboard/position-view.html">Position View</a>
+                <a class="ghost-button" href="/dashboard/trade-ticket.html">New Ticket</a>
+                <a class="ghost-button" href="/dashboard/index.html">Workflow Studio</a>
+                <button id="blotter-refresh-button" class="ghost-button" type="button">Refresh</button>
+            </div>
+        </header>
+
+        <main class="blotter-layout">
+            <section class="panel blotter-sidebar-panel">
+                <div class="panel-heading">
+                    <p class="panel-kicker">Filters</p>
+                    <h2>Trade lanes</h2>
+                </div>
+
+                <section class="form-card">
+                    <label class="field">
+                        <span class="field-label">Search</span>
+                        <input id="blotter-search" class="text-input" type="search" placeholder="Ticket, trader, counterparty, instrument">
+                    </label>
+                    <label class="field">
+                        <span class="field-label">Asset class</span>
+                        <select id="blotter-asset-class" class="text-input">
+                            <option value="">All asset classes</option>
+                            <option>Equity</option>
+                            <option>FX</option>
+                            <option>Rates</option>
+                            <option>Credit</option>
+                            <option>Commodity</option>
+                            <option>Fund</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span class="field-label">Trade type</span>
+                        <select id="blotter-trade-type" class="text-input">
+                            <option value="">All trade types</option>
+                            <option>Cash</option>
+                            <option>Position</option>
+                            <option>Contract / OTC</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span class="field-label">Book</span>
+                        <input id="blotter-book" class="text-input" type="text" placeholder="EQ-ARBITRAGE">
+                    </label>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Status</p>
+                            <h3>Lifecycle filters</h3>
+                        </div>
+                    </div>
+                    <div id="status-filter-list" class="status-filter-list"></div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Queues</p>
+                            <h3>Operational slices</h3>
+                        </div>
+                    </div>
+                    <div id="lane-summary-list" class="lane-summary-list"></div>
+                </section>
+            </section>
+
+            <section class="panel blotter-main-panel">
+                <div class="panel-heading panel-heading-split">
+                    <div>
+                        <p class="panel-kicker">Book</p>
+                        <h2>Trade blotter</h2>
+                    </div>
+                    <div class="toolbar">
+                        <span id="blotter-count-pill" class="pill">0 trades</span>
+                    </div>
+                </div>
+
+                <section class="stat-grid trade-stat-grid blotter-stat-grid">
+                    <article class="stat-card">
+                        <p class="stat-label">Gross notional</p>
+                        <strong id="gross-notional-stat" class="stat-value">USD 0.00</strong>
+                        <p class="helper-copy">Filtered universe gross notional.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Ready to book</p>
+                        <strong id="ready-count-stat" class="stat-value">0</strong>
+                        <p class="helper-copy">Approved tickets awaiting booking.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Exception queue</p>
+                        <strong id="exception-count-stat" class="stat-value">0</strong>
+                        <p class="helper-copy">Operationally escalated or incomplete tickets.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Trade types</p>
+                        <strong id="trade-type-stat" class="stat-value">0</strong>
+                        <p class="helper-copy">Distinct trade types in scope.</p>
+                    </article>
+                </section>
+
+                <section class="form-card blotter-grid-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Live View</p>
+                            <h3>Trade rows</h3>
+                        </div>
+                    </div>
+                    <div class="blotter-table-wrap">
+                        <table class="blotter-table">
+                            <thead>
+                                <tr>
+                                    <th>Ticket</th>
+                                    <th>Status</th>
+                                    <th>Type</th>
+                                    <th>Instrument</th>
+                                    <th>Side</th>
+                                    <th>Qty</th>
+                                    <th>Price</th>
+                                    <th>Gross</th>
+                                    <th>Book</th>
+                                    <th>Trader</th>
+                                    <th>Counterparty</th>
+                                    <th>Updated</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="blotter-table-body"></tbody>
+                        </table>
+                    </div>
+                </section>
+            </section>
+
+            <section class="panel blotter-detail-panel">
+                <div class="panel-heading">
+                    <p class="panel-kicker">Inspect</p>
+                    <h2>Selected trade</h2>
+                </div>
+
+                <section class="form-card">
+                    <div id="selected-trade-detail" class="selected-trade-detail"></div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Recent</p>
+                            <h3>Activity snapshot</h3>
+                        </div>
+                    </div>
+                    <div id="selected-trade-activity" class="activity-list"></div>
+                </section>
+            </section>
+        </main>
+    </div>
+
+    <template id="blotter-empty-state-template">
+        <div class="empty-state">
+            <p class="empty-title"></p>
+            <p class="empty-copy"></p>
+        </div>
+    </template>
+
+    <script src="/dashboard/trade-store.js?v=20260327c"></script>
+    <script src="/dashboard/trade-blotter.js?v=20260327c"></script>
+</body>
+</html>

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Squiddy Position View</title>
+    <link rel="stylesheet" href="/dashboard/styles.css">
+</head>
+<body>
+    <div class="shell trade-shell">
+        <header class="hero trade-hero">
+            <div class="hero-copy-block">
+                <div class="terminal-strip" aria-label="Position view status">
+                    <span class="terminal-pill terminal-pill-orange">SQDY &lt;POS&gt;</span>
+                    <span class="terminal-pill">Position View</span>
+                    <span class="terminal-pill terminal-pill-cyan">Slice &amp; Dice</span>
+                    <span class="terminal-pill terminal-pill-green">Allocation Aware</span>
+                    <span id="position-ui-build-pill" class="terminal-pill">UI Build</span>
+                </div>
+                <p class="eyebrow">Exposure Monitoring</p>
+                <h1>Position View</h1>
+                <p class="hero-copy">
+                    Analyze aggregated positions across traders, portfolios, counterparties, products, books, and asset classes from the same working trade book.
+                </p>
+            </div>
+            <div class="hero-actions">
+                <a class="ghost-button" href="/dashboard/trade-blotter.html">Trade Blotter</a>
+                <a class="ghost-button" href="/dashboard/trade-ticket.html">Trade Ticket</a>
+                <a class="ghost-button" href="/dashboard/index.html">Workflow Studio</a>
+                <button id="position-refresh-button" class="ghost-button" type="button">Refresh</button>
+            </div>
+        </header>
+
+        <main class="position-layout">
+            <section class="panel position-sidebar-panel">
+                <div class="panel-heading">
+                    <p class="panel-kicker">Filters</p>
+                    <h2>Exposure scope</h2>
+                </div>
+
+                <section class="form-card">
+                    <label class="field">
+                        <span class="field-label">Search</span>
+                        <input id="position-search" class="text-input" type="search" placeholder="Instrument, ticket, trader, portfolio">
+                    </label>
+                    <label class="field">
+                        <span class="field-label">Slice by</span>
+                        <select id="position-group-by" class="text-input">
+                            <option value="portfolio">Portfolio</option>
+                            <option value="trader">Trader</option>
+                            <option value="counterparty">Counterparty</option>
+                            <option value="tradeType">Trade type</option>
+                            <option value="productType">Product</option>
+                            <option value="book">Book</option>
+                            <option value="assetClass">Asset class</option>
+                            <option value="instrument">Instrument</option>
+                            <option value="strategy">Strategy</option>
+                            <option value="venue">Venue</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span class="field-label">Asset class</span>
+                        <select id="position-asset-class" class="text-input">
+                            <option value="">All asset classes</option>
+                            <option>Equity</option>
+                            <option>FX</option>
+                            <option>Rates</option>
+                            <option>Credit</option>
+                            <option>Commodity</option>
+                            <option>Fund</option>
+                        </select>
+                    </label>
+                </section>
+
+                <section class="form-card">
+                    <div class="field-grid">
+                        <label class="field">
+                            <span class="field-label">Trader</span>
+                            <input id="position-trader-filter" class="text-input" type="text" placeholder="jwoeste">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Portfolio</span>
+                            <input id="position-portfolio-filter" class="text-input" type="text" placeholder="FUND-ALPHA">
+                        </label>
+                    </div>
+                    <div class="field-grid">
+                        <label class="field">
+                            <span class="field-label">Counterparty</span>
+                            <input id="position-counterparty-filter" class="text-input" type="text" placeholder="Goldman Sachs">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Trade type</span>
+                            <select id="position-trade-type-filter" class="text-input">
+                                <option value="">All trade types</option>
+                                <option>Cash</option>
+                                <option>Position</option>
+                                <option>Contract / OTC</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="field-grid">
+                        <label class="field">
+                            <span class="field-label">Product</span>
+                            <input id="position-product-filter" class="text-input" type="text" placeholder="Cash Equity">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Book</span>
+                            <input id="position-book-filter" class="text-input" type="text" placeholder="EQ-ARBITRAGE">
+                        </label>
+                        <label class="field">
+                            <span class="field-label">Instrument</span>
+                            <input id="position-instrument-filter" class="text-input" type="text" placeholder="AAPL.OQ">
+                        </label>
+                    </div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Status</p>
+                            <h3>Workflow scope</h3>
+                        </div>
+                    </div>
+                    <div id="position-status-filter-list" class="status-filter-list"></div>
+                </section>
+
+                <section class="form-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Coverage</p>
+                            <h3>Quick stats</h3>
+                        </div>
+                    </div>
+                    <div id="position-coverage-list" class="lane-summary-list"></div>
+                </section>
+            </section>
+
+            <section class="panel position-main-panel">
+                <div class="panel-heading panel-heading-split">
+                    <div>
+                        <p class="panel-kicker">Aggregates</p>
+                        <h2>Position slices</h2>
+                    </div>
+                    <div class="toolbar">
+                        <span id="position-count-pill" class="pill">0 rows</span>
+                    </div>
+                </div>
+
+                <section class="stat-grid trade-stat-grid position-stat-grid">
+                    <article class="stat-card">
+                        <p class="stat-label">Net market value</p>
+                        <strong id="position-net-stat" class="stat-value">USD 0.00</strong>
+                        <p class="helper-copy">Signed aggregate value of filtered rows.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Gross notional</p>
+                        <strong id="position-gross-stat" class="stat-value">USD 0.00</strong>
+                        <p class="helper-copy">Absolute notional footprint of the slice.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Net quantity</p>
+                        <strong id="position-quantity-stat" class="stat-value">0</strong>
+                        <p class="helper-copy">Signed quantity across all filtered rows.</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">Distinct groups</p>
+                        <strong id="position-groups-stat" class="stat-value">0</strong>
+                        <p class="helper-copy">Unique values in the active slice dimension.</p>
+                    </article>
+                </section>
+
+                <section class="form-card position-chart-section">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Exposure Mix</p>
+                            <h3>Pie charts</h3>
+                        </div>
+                    </div>
+                    <div class="position-chart-grid">
+                        <article id="position-chart-currency" class="position-chart-card"></article>
+                        <article id="position-chart-trade-type" class="position-chart-card"></article>
+                        <article id="position-chart-counterparty" class="position-chart-card"></article>
+                        <article id="position-chart-status" class="position-chart-card"></article>
+                    </div>
+                </section>
+
+                <section class="form-card blotter-grid-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Pivot</p>
+                            <h3>Aggregated positions</h3>
+                        </div>
+                    </div>
+                    <div class="blotter-table-wrap">
+                        <table class="blotter-table position-table">
+                            <thead>
+                                <tr>
+                                    <th>Slice</th>
+                                    <th>Rows</th>
+                                    <th>Net Qty</th>
+                                    <th>Gross Qty</th>
+                                    <th>Net MV</th>
+                                    <th>Gross Notional</th>
+                                    <th>Books</th>
+                                    <th>Counterparties</th>
+                                    <th>Instruments</th>
+                                </tr>
+                            </thead>
+                            <tbody id="position-table-body"></tbody>
+                        </table>
+                    </div>
+                </section>
+            </section>
+
+            <section class="panel position-detail-panel">
+                <div class="panel-heading">
+                    <p class="panel-kicker">Drill Down</p>
+                    <h2>Selected slice</h2>
+                </div>
+
+                <section class="form-card">
+                    <div id="position-selected-detail" class="selected-trade-detail"></div>
+                </section>
+
+                <section class="form-card blotter-grid-card">
+                    <div class="section-title-row">
+                        <div>
+                            <p class="panel-kicker">Constituents</p>
+                            <h3>Underlying rows</h3>
+                        </div>
+                    </div>
+                    <div class="blotter-table-wrap position-detail-table-wrap">
+                        <table class="blotter-table position-table">
+                            <thead>
+                                <tr>
+                                    <th>Ticket</th>
+                                    <th>Instrument</th>
+                                    <th>Type</th>
+                                    <th>Trader</th>
+                                    <th>Portfolio</th>
+                                    <th>Counterparty</th>
+                                    <th>Status</th>
+                                    <th>Side</th>
+                                    <th>Signed Qty</th>
+                                    <th>Net MV</th>
+                                </tr>
+                            </thead>
+                            <tbody id="position-constituents-body"></tbody>
+                        </table>
+                    </div>
+                </section>
+            </section>
+        </main>
+    </div>
+
+    <template id="position-empty-state-template">
+        <div class="empty-state">
+            <p class="empty-title"></p>
+            <p class="empty-copy"></p>
+        </div>
+    </template>
+
+    <script src="/dashboard/trade-store.js?v=20260327c"></script>
+    <script src="/dashboard/position-view.js?v=20260327c"></script>
+</body>
+</html>
