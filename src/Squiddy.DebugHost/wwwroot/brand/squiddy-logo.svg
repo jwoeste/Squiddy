@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Squiddy pie chart logo</title>
+  <desc id="desc">A polished pie chart logo in a Bloomberg-inspired dark terminal palette.</desc>
+  <defs>
+    <linearGradient id="panel" x1="256" y1="20" x2="256" y2="492" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#151d27"/>
+      <stop offset="0.58" stop-color="#0a0f15"/>
+      <stop offset="1" stop-color="#040609"/>
+    </linearGradient>
+    <radialGradient id="ambient" cx="256" cy="220" r="230" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#43d7ff" stop-opacity="0.16"/>
+      <stop offset="0.45" stop-color="#ff8c00" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#43d7ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="148" y1="148" x2="364" y2="366" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#40556f"/>
+      <stop offset="0.5" stop-color="#182432"/>
+      <stop offset="1" stop-color="#49627e"/>
+    </linearGradient>
+    <filter id="outerShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <filter id="glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#43d7ff" flood-opacity="0.20"/>
+    </filter>
+  </defs>
+
+  <rect x="20" y="20" width="472" height="472" rx="118" fill="url(#panel)"/>
+  <rect x="20" y="20" width="472" height="472" rx="118" fill="url(#ambient)"/>
+  <rect x="20" y="20" width="472" height="472" rx="118" fill="none" stroke="#223243" stroke-width="2"/>
+  <path d="M76 58H436" stroke="#ff8c00" stroke-width="7" stroke-linecap="round" opacity="0.92"/>
+
+  <g filter="url(#outerShadow)">
+    <circle cx="256" cy="294" r="134" fill="#05080c" stroke="url(#ring)" stroke-width="10"/>
+    <circle cx="256" cy="294" r="123" fill="none" stroke="#0f1720" stroke-width="20"/>
+    <g filter="url(#glow)">
+      <path d="M256 294L256 171A123 123 0 0 1 368 236Z" fill="#ff8c00"/>
+      <path d="M256 294L368 236A123 123 0 0 1 341 377Z" fill="#43d7ff"/>
+      <path d="M256 294L341 377A123 123 0 0 1 188 396Z" fill="#7cff6b"/>
+      <path d="M256 294L188 396A123 123 0 0 1 139 251Z" fill="#ffd24a"/>
+      <path d="M256 294L139 251A123 123 0 0 1 256 171Z" fill="#233042"/>
+    </g>
+    <circle cx="256" cy="294" r="56" fill="#121a23" stroke="#f4f1dd" stroke-opacity="0.35" stroke-width="4"/>
+    <circle cx="256" cy="294" r="36" fill="#0a0f15"/>
+  </g>
+
+</svg>
